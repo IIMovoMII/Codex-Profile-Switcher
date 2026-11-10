@@ -1,0 +1,42 @@
+name: Build Windows installer
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Validate release version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release tag: $env:RELEASE_TAG" }
+          if ((Get-Content -Raw version.txt).Trim() -ne $version) { throw "Release tag and version.txt differ." }
+
+      - name: Install Inno Setup
+        run: winget install --id JRSoftware.InnoSetup --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          .\build-installer.ps1 -OutputDirectory .\dist
+          Get-ChildItem .\dist | Get-FileHash -Algorithm SHA256
+
+      - name: Attach installer and checksum
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            dist/*

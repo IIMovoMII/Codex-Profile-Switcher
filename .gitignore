@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.tmp
+*.dpapi
+auth.json
+config.toml
+models_cache.json
+sessions/
+archived_sessions/
+history-repair-backups/
+state-repair/
+test-results/
+dist/
+*.sqlite*
+*.jsonl
+
+# Local-only records and previous project material.
+archive/
+dist*/
+AGENTS.md
+PROJECT_STATUS.md
+HANDOFF.zh-CN.md
+
+# Inno Setup intermediates.
+*.iss.bak
