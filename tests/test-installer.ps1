@@ -42,11 +42,18 @@ try {
     $manifestPath = Join-Path $installRoot 'SHA256.json'
     if (-not [IO.File]::Exists($manifestPath)) { throw 'The installed file manifest is missing.' }
     $manifest = [IO.File]::ReadAllText($manifestPath,[Text.Encoding]::UTF8) | ConvertFrom-Json
+    . (Join-Path $script:ProjectRoot 'distribution-files.ps1')
+    if (@($manifest).Count -ne $script:DistributionFiles.Count) { throw 'Installed manifest differs from the distribution allowlist.' }
     foreach ($entry in $manifest) {
+        if ([string]$entry.path -notin $script:DistributionFiles) { throw "Unexpected installed payload: $($entry.path)" }
         $path = Join-Path $installRoot ([string]$entry.path)
         if (-not [IO.File]::Exists($path)) { throw "Installed runtime file missing: $($entry.path)" }
         $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne [string]$entry.sha256) { throw "Installed runtime file failed its manifest hash: $($entry.path)" }
+        $source = Join-Path $script:ProjectRoot ([string]$entry.path)
+        if ($actual -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()) {
+            throw "Installer is stale relative to current source: $($entry.path)"
+        }
     }
 
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'

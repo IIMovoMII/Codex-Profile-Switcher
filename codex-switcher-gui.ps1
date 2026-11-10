@@ -68,6 +68,93 @@ function New-ProxyHelpIndicator {
     [Windows.Automation.AutomationProperties]::SetName($help,'系统代理说明');[Windows.Automation.AutomationProperties]::SetHelpText($help,$explanation)
     return $help
 }
+function Fill-ModelCatalogModes($Combo,[string]$Value) {
+    $Combo.Items.Clear()
+    foreach($choice in @(@('手动维护目录','manual'),@('跟随官方目录','official'))) {
+        [void]$Combo.Items.Add([pscustomobject]@{Label=$choice[0];Value=$choice[1]})
+    }
+    $Combo.DisplayMemberPath='Label';$Combo.SelectedIndex=0
+    foreach($item in $Combo.Items){if($item.Value -eq $Value){$Combo.SelectedItem=$item;break}}
+}
+function Fill-OfficialCatalogSources($Combo,[string]$SelectedId) {
+    $Combo.Items.Clear()
+    foreach($source in @($script:View.OfficialCatalogSources)) {
+        $availability=if($source.SnapshotExists){'已有快照'}else{'尚未同步'}
+        [void]$Combo.Items.Add([pscustomobject]@{Label=($source.Name+'（'+$availability+'）');Value=$source.Id})
+    }
+    $existing=@($Combo.Items | Where-Object Value -eq $SelectedId)
+    if($SelectedId -and $existing.Count -eq 0) {
+        [void]$Combo.Items.Add([pscustomobject]@{Label=($SelectedId+'（账号未登记）');Value=$SelectedId})
+    }
+    $Combo.DisplayMemberPath='Label';$Combo.SelectedIndex=-1
+    foreach($item in $Combo.Items){if($item.Value -eq $SelectedId){$Combo.SelectedItem=$item;break}}
+    if($Combo.SelectedIndex -lt 0 -and $Combo.Items.Count -eq 1){$Combo.SelectedIndex=0}
+}
+function Get-EditorModelCatalogPath($Fields) {
+    $mode=if($Fields.model_catalog_mode.SelectedItem){[string]$Fields.model_catalog_mode.SelectedItem.Value}else{'manual'}
+    if($mode -eq 'official') {
+        $sourceId=if($Fields.model_catalog_source_official_id.SelectedItem){[string]$Fields.model_catalog_source_official_id.SelectedItem.Value}else{''}
+        if($sourceId -match '^official-[a-f0-9]{64}$'){return Get-OfficialModelCatalogPath $sourceId}
+        return ''
+    }
+    $path=$Fields.model_catalog_json.Text.Trim()
+    if(-not $path){return $RelayModelCatalogPath}
+    try{return Resolve-NormalizedPath $path}catch{return $path}
+}
+function Update-ModelCatalogPresentation($Fields) {
+    $mode=if($Fields.model_catalog_mode.SelectedItem){[string]$Fields.model_catalog_mode.SelectedItem.Value}else{'manual'}
+    $isOfficial=$mode -eq 'official'
+    $isApi=$Fields.kind.SelectedIndex -eq 1
+    $Fields.model_catalog_json_row.Visibility=if($isApi -and -not $isOfficial){'Visible'}else{'Collapsed'}
+    $Fields.model_catalog_source_official_id_row.Visibility=if($isApi -and $isOfficial){'Visible'}else{'Collapsed'}
+    $Fields.catalog_panel.Visibility=if($isApi){'Visible'}else{'Collapsed'}
+    $path=Get-EditorModelCatalogPath $Fields
+    $Fields.catalog_path_display.Text=if($path){$path}else{'尚未选择目录文件'}
+    $exists=$path -and [IO.File]::Exists($path)
+    if($isOfficial) {
+        $sourceId=if($Fields.model_catalog_source_official_id.SelectedItem){[string]$Fields.model_catalog_source_official_id.SelectedItem.Value}else{''}
+        $source=@($script:View.OfficialCatalogSources | Where-Object Id -eq $sourceId | Select-Object -First 1)
+        if($source.Count -and $source[0].SnapshotExists) {
+            $updated=if($source[0].UpdatedUtc){([DateTimeOffset]::Parse($source[0].UpdatedUtc)).ToLocalTime().ToString('yyyy-MM-dd HH:mm')}else{'未知'}
+            $version=if($source[0].ClientVersion){' · Codex '+$source[0].ClientVersion}else{''}
+            $Fields.catalog_status.Text='跟随官方账号：'+$source[0].Name+' · 上次同步 '+$updated+$version
+        } elseif($source.Count) {
+            $Fields.catalog_status.Text='跟随官方账号：'+$source[0].Name+' · 尚无匹配缓存快照，切换仍可继续；模型列表可能不完整。'
+        } elseif($exists) {
+            $updated=[IO.File]::GetLastWriteTimeUtc($path).ToLocalTime().ToString('yyyy-MM-dd HH:mm')
+            $Fields.catalog_status.Text='来源账号已移除 · 继续使用该账号已保存的快照 · 文件更新时间 '+$updated
+        } else {
+            $Fields.catalog_status.Text='尚未登记可用的官方目录来源。请先添加官方账号，或改用手动维护。'
+        }
+    } else {
+        if($exists) {
+            $updated=[IO.File]::GetLastWriteTimeUtc($path).ToLocalTime().ToString('yyyy-MM-dd HH:mm')
+            $Fields.catalog_status.Text='手动维护 · 文件更新时间 '+$updated
+        } else {
+            $Fields.catalog_status.Text='手动维护 · 文件尚未创建；切换仍可继续，但模型列表可能不完整。'
+        }
+    }
+}
+function Open-EditorModelCatalog([System.Collections.IDictionary]$Fields,[switch]$ContainingFolder) {
+    $path=Get-EditorModelCatalogPath $Fields
+    if(-not $path){throw '请先选择官方账号来源，或切换到手动维护。'}
+    $folder=Split-Path -Parent $path
+    if($ContainingFolder) {
+        [void][IO.Directory]::CreateDirectory($folder)
+        Start-Process -FilePath explorer.exe -ArgumentList ('"'+$folder+'"') | Out-Null
+        return
+    }
+    if(-not [IO.File]::Exists($path)) {
+        $mode=[string]$Fields.model_catalog_mode.SelectedItem.Value
+        if($mode -eq 'official'){throw '该官方账号尚未生成可打开的快照。'}
+        [void][IO.Directory]::CreateDirectory($folder)
+        $bytes=$script:Utf8NoBom.GetBytes('{"models":[]}' + [Environment]::NewLine)
+        $stream=New-Object IO.FileStream($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+    }
+    Start-Process -FilePath $path | Out-Null
+    Update-ModelCatalogPresentation $Fields
+}
 function Render-Profiles {
     if($null -eq $script:View){return}
     $query=$script:UI.SearchBox.Text.Trim()
@@ -292,7 +379,7 @@ function Show-ProfileEditor([AllowNull()]$Profile,[switch]$NoDisplay) {
     $dialog=New-Object Windows.Window
     if($script:Window.IsVisible){$dialog.Owner=$script:Window}
     $dialog.WindowStartupLocation='CenterOwner';$dialog.Title=if($editing){'编辑名称与配置'}else{'添加账号'}
-    $dialog.Width=560;$dialog.Height=735;$dialog.MinHeight=600;$dialog.ResizeMode='CanResize';$dialog.Background='White';$dialog.FontFamily=$script:Window.FontFamily;$dialog.FontSize=13
+    $dialog.Width=600;$dialog.Height=790;$dialog.MinHeight=620;$dialog.ResizeMode='CanResize';$dialog.Background='White';$dialog.FontFamily=$script:Window.FontFamily;$dialog.FontSize=13
     $outer=New-Object Windows.Controls.Grid;$outer.Margin='28'
     foreach($height in @('Auto','*','Auto')){$row=New-Object Windows.Controls.RowDefinition;$row.Height=$height;[void]$outer.RowDefinitions.Add($row)}
     $head=New-Object Windows.Controls.StackPanel
@@ -301,13 +388,13 @@ function Show-ProfileEditor([AllowNull()]$Profile,[switch]$NoDisplay) {
     $scroll=New-Object Windows.Controls.ScrollViewer;$scroll.VerticalScrollBarVisibility='Auto';[Windows.Controls.Grid]::SetRow($scroll,1)
     $form=New-Object Windows.Controls.StackPanel;$form.Margin='0,0,9,0';$scroll.Content=$form;[void]$outer.Children.Add($scroll)
     $fields=@{}
-    foreach($spec in @(@('kind','连接类型'),@('name','账号名称'),@('base_url','API 地址（HTTPS）'),@('api_key',$(if($editing){'API Key（留空保留原密钥）'}else{'API Key'})),@('model','模型名称（可选）'),@('context_window','上下文窗口（可选）'),@('proxy_policy','系统代理'),@('model_catalog_json','模型目录 JSON 路径（可选）'))) {
+    foreach($spec in @(@('kind','连接类型'),@('name','账号名称'),@('base_url','API 地址（HTTPS）'),@('api_key',$(if($editing){'API Key（留空保留原密钥）'}else{'API Key'})),@('model','模型名称（可选）'),@('context_window','上下文窗口（可选）'),@('proxy_policy','系统代理'),@('model_catalog_mode','模型目录维护方式'),@('model_catalog_source_official_id','官方目录来源账号'),@('model_catalog_json','手动模型目录 JSON 文件'))) {
         $stack=New-Object Windows.Controls.StackPanel;$stack.Margin='0,0,0,16'
         $labelRow=New-Object Windows.Controls.StackPanel;$labelRow.Orientation='Horizontal';$labelRow.Margin='0,0,0,8'
         $label=New-Object Windows.Controls.TextBlock;$label.Text=$spec[1];$label.Foreground='#525B66';[void]$labelRow.Children.Add($label)
         if($spec[0] -eq 'proxy_policy'){$help=New-ProxyHelpIndicator;[void]$labelRow.Children.Add($help);$fields['proxy_help']=$help}
         [void]$stack.Children.Add($labelRow)
-        if($spec[0] -in @('kind','proxy_policy')){$control=New-Object Windows.Controls.ComboBox;$control.MinHeight=39;$control.Padding='9,7'}elseif($spec[0] -eq 'api_key'){$control=New-Object Windows.Controls.PasswordBox;$control.Padding='10,10';$control.BorderBrush='#DDE1E7'}else{$control=New-Object Windows.Controls.TextBox;$control.Padding='10,10';$control.BorderBrush='#DDE1E7'}
+        if($spec[0] -in @('kind','proxy_policy','model_catalog_mode','model_catalog_source_official_id')){$control=New-Object Windows.Controls.ComboBox;$control.MinHeight=39;$control.Padding='9,7'}elseif($spec[0] -eq 'api_key'){$control=New-Object Windows.Controls.PasswordBox;$control.Padding='10,10';$control.BorderBrush='#DDE1E7'}else{$control=New-Object Windows.Controls.TextBox;$control.Padding='10,10';$control.BorderBrush='#DDE1E7'}
         $control.Tag=$spec[0];[Windows.Automation.AutomationProperties]::SetName($control,$spec[1]);[void]$stack.Children.Add($control);[void]$form.Children.Add($stack)
         if($spec[0] -eq 'context_window'){
             $hint=New-Object Windows.Controls.TextBlock;$hint.Text='单位为 token。留空保留 Codex 当前值，没有配置时跟随模型默认。';$hint.TextWrapping='Wrap';$hint.FontSize=11;$hint.Foreground='#858B94';$hint.Margin='0,7,0,0';[void]$stack.Children.Add($hint)
@@ -316,11 +403,46 @@ function Show-ProfileEditor([AllowNull()]$Profile,[switch]$NoDisplay) {
     }
     [void]$fields.kind.Items.Add('官方 ChatGPT 账号');[void]$fields.kind.Items.Add('自定义 API 接口');$fields.kind.SelectedIndex=0
     Fill-ProxyChoices $fields.proxy_policy 'preserve'
+    Fill-ModelCatalogModes $fields.model_catalog_mode 'manual'
+    Fill-OfficialCatalogSources $fields.model_catalog_source_official_id ''
+    $catalogPanel=New-Object Windows.Controls.StackPanel;$catalogPanel.Margin='0,0,0,8'
+    $catalogHeading=New-Object Windows.Controls.TextBlock;$catalogHeading.Text='模型目录维护';$catalogHeading.FontWeight='SemiBold';$catalogHeading.Foreground='#303741';$catalogHeading.Margin='0,2,0,8';[void]$catalogPanel.Children.Add($catalogHeading)
+    $catalogHint=New-Object Windows.Controls.TextBlock
+    $catalogHint.Text='为兼容官方账号与 API 账号共享聊天，本助手的 API 模式可使用独立的本地模型目录。该目录不会自动从中转站的普通 /v1/models 接口更新。你可以从官方账号缓存同步，或手动维护下方文件；没有官方账号也可以继续使用和编辑已保存的目录。请按完整 Codex 模型目录格式修改，不能只填写模型名称。修改后完全退出并重新启动 Codex 生效。目录中出现某个模型，不代表中转站已经支持调用该模型。'
+    $catalogHint.TextWrapping='Wrap';$catalogHint.FontSize=11;$catalogHint.Foreground='#6E7782';$catalogHint.Margin='0,0,0,12';[void]$catalogPanel.Children.Add($catalogHint)
+    $syncHint=New-Object Windows.Controls.TextBlock;$syncHint.Text='跟随官方目录：正常离开所选官方账号时读取本地缓存，确认来源后保存独立快照；快速切换不进行同步。需要自行编辑时请选择手动维护目录。';$syncHint.TextWrapping='Wrap';$syncHint.FontSize=11;$syncHint.Foreground='#6E7782';$syncHint.Margin='0,0,0,12';[void]$catalogPanel.Children.Add($syncHint)
+    $catalogActions=New-Object Windows.Controls.StackPanel;$catalogActions.Orientation='Horizontal';$catalogActions.Margin='0,2,0,9'
+    $openCatalog=New-Object Windows.Controls.Button;$openCatalog.Content='打开模型目录文件';$openCatalog.Padding='12,7';$openCatalog.Margin='0,0,8,0'
+    $openCatalogFolder=New-Object Windows.Controls.Button;$openCatalogFolder.Content='打开所在文件夹';$openCatalogFolder.Padding='12,7';$openCatalogFolder.Margin='0,0,8,0'
+    $browseCatalog=New-Object Windows.Controls.Button;$browseCatalog.Content='选择 JSON…';$browseCatalog.Padding='12,7'
+    [void]$catalogActions.Children.Add($openCatalog);[void]$catalogActions.Children.Add($openCatalogFolder);[void]$catalogActions.Children.Add($browseCatalog)
+    [void]$catalogPanel.Children.Add($catalogActions)
+    $pathDisplay=New-Object Windows.Controls.TextBlock;$pathDisplay.TextWrapping='Wrap';$pathDisplay.FontSize=10;$pathDisplay.Foreground='#858B94';$pathDisplay.Margin='0,0,0,6'
+    $catalogStatus=New-Object Windows.Controls.TextBlock;$catalogStatus.TextWrapping='Wrap';$catalogStatus.FontSize=11;$catalogStatus.Foreground='#687181';$catalogStatus.Margin='0,0,0,0'
+    [void]$catalogPanel.Children.Add($pathDisplay);[void]$catalogPanel.Children.Add($catalogStatus);[void]$form.Children.Add($catalogPanel)
+    $fields['catalog_path_display']=$pathDisplay;$fields['catalog_status']=$catalogStatus;$fields['catalog_panel']=$catalogPanel
+    $fields['catalog_open_file']=$openCatalog;$fields['catalog_open_folder']=$openCatalogFolder;$fields['catalog_browse']=$browseCatalog
     if($editing){
         $fields.kind.SelectedIndex=if($Profile.Kind -eq 'api'){1}else{0};$fields.kind.IsEnabled=$false
         $fields.name.Text=$Profile.Name;$fields.base_url.Text=$Profile.BaseUrl;$fields.model.Text=$Profile.Model;$fields.context_window.Text=$Profile.ContextWindow;$fields.model_catalog_json.Text=$Profile.Catalog
+        Fill-ModelCatalogModes $fields.model_catalog_mode $Profile.CatalogMode
+        Fill-OfficialCatalogSources $fields.model_catalog_source_official_id $Profile.CatalogSourceOfficialProfileId
         Fill-ProxyChoices $fields.proxy_policy $Profile.ProxyPolicy
     }
+    $fields.model_catalog_mode.Tag=$fields;$fields.model_catalog_source_official_id.Tag=$fields
+    $fields.model_catalog_mode.Add_SelectionChanged({param($sender,$event)Update-ModelCatalogPresentation $sender.Tag})
+    $fields.model_catalog_source_official_id.Add_SelectionChanged({param($sender,$event)Update-ModelCatalogPresentation $sender.Tag})
+    $fields.model_catalog_json.Add_TextChanged({param($sender,$event)Update-ModelCatalogPresentation $sender.Tag})
+    $fields.model_catalog_json.Tag=$fields
+    $fields['dialog']=$dialog
+    $openCatalog.Tag=$fields;$openCatalogFolder.Tag=$fields;$browseCatalog.Tag=$fields
+    $openCatalog.Add_Click({param($sender,$event)try{Open-EditorModelCatalog $sender.Tag}catch{$sender.Tag.catalog_status.Text=$_.Exception.Message}})
+    $openCatalogFolder.Add_Click({param($sender,$event)try{Open-EditorModelCatalog $sender.Tag -ContainingFolder}catch{$sender.Tag.catalog_status.Text=$_.Exception.Message}})
+    $browseCatalog.Add_Click({param($sender,$event)
+        $context=$sender.Tag;$picker=New-Object Microsoft.Win32.OpenFileDialog;$picker.Filter='JSON 文件 (*.json)|*.json|所有文件 (*.*)|*.*';$picker.CheckFileExists=$true;$picker.Multiselect=$false
+        if($picker.ShowDialog($context.dialog) -eq $true){Fill-ModelCatalogModes $context.model_catalog_mode 'manual';$context.model_catalog_json.Text=$picker.FileName;Update-ModelCatalogPresentation $context}
+    })
+    Update-ModelCatalogPresentation $fields
     $foot=New-Object Windows.Controls.StackPanel;[Windows.Controls.Grid]::SetRow($foot,2)
     $errorText=New-Object Windows.Controls.TextBlock;$errorText.Foreground='#BE6745';$errorText.TextWrapping='Wrap';$errorText.Margin='0,12,0,9';[void]$foot.Children.Add($errorText)
     $buttonRow=New-Object Windows.Controls.StackPanel;$buttonRow.Orientation='Horizontal';$buttonRow.HorizontalAlignment='Right'
@@ -336,7 +458,8 @@ function Show-ProfileEditor([AllowNull()]$Profile,[switch]$NoDisplay) {
         param($sender,$event)
         $context=$sender.Tag;$fields=$context.Fields
         $isApi=$fields.kind.SelectedIndex -eq 1
-        foreach($key in @('base_url','api_key','model_catalog_json')){$fields[$key+'_row'].Visibility=if($isApi){'Visible'}else{'Collapsed'}}
+        foreach($key in @('base_url','api_key','model_catalog_mode','model_catalog_source_official_id','model_catalog_json')){$fields[$key+'_row'].Visibility=if($isApi){'Visible'}else{'Collapsed'}}
+        Update-ModelCatalogPresentation $fields
         if(-not $context.Editing){$context.Description.Text=if($isApi){'保存这个 API 的连接信息，之后可随时切换。凭据仅保存在此电脑。'}else{'将在浏览器中登录。请确认登录的是你要添加的账号。'}}
     }
     $fields.kind.Add_SelectionChanged($updateKind);& $updateKind $fields.kind $null
@@ -354,7 +477,9 @@ function Show-ProfileEditor([AllowNull()]$Profile,[switch]$NoDisplay) {
                 Assert-RelayBaseUrl $fields.base_url.Text.Trim()
                 if(-not $editing -and $fields.api_key.Password.Length -eq 0){throw '请输入 API Key。'}
                 $request['base_url']=$fields.base_url.Text.Trim();$request['api_key']=$fields.api_key.Password;$request['model_catalog_json']=$fields.model_catalog_json.Text.Trim()
-                if($request['model_catalog_json'] -and -not [IO.File]::Exists($request['model_catalog_json'])){throw '模型目录文件不存在。'}
+                $request['model_catalog_mode']=[string]$fields.model_catalog_mode.SelectedItem.Value
+                $request['model_catalog_source_official_id']=if($fields.model_catalog_source_official_id.SelectedItem){[string]$fields.model_catalog_source_official_id.SelectedItem.Value}else{''}
+                if($request['model_catalog_mode'] -eq 'official' -and -not $request['model_catalog_source_official_id']){throw '请选择官方目录来源账号，或改用手动维护。'}
             }
             $context.Dialog.Close();Start-UiOperation $request $(if($editing){'保存账号配置'}else{'添加账号'})
             $fields.api_key.Clear();$request.Remove('api_key')

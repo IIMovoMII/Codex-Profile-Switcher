@@ -62,6 +62,11 @@ function Assert-ProfileRegistry {
             throw "中转配置档案缺少名称、地址或认证文件。"
         }
         Assert-RelayBaseUrl ([string](Get-ProfileField $item 'base_url'))
+        $catalogMode = [string](Get-ProfileField $item 'model_catalog_mode')
+        if ($catalogMode -and $catalogMode -notin @('manual','official')) { throw 'API 档案的模型目录维护方式无效。' }
+        $catalogSource = [string](Get-ProfileField $item 'model_catalog_source_official_id')
+        if ($catalogSource -and $catalogSource -notmatch '^official-[a-f0-9]{64}$') { throw 'API 档案的官方模型目录来源无效。' }
+        if ($catalogMode -eq 'official' -and -not $catalogSource) { throw '跟随官方目录时必须指定官方账号来源。' }
     }
     $officialItems = Get-ProfileField $Registry 'official_profiles'
     foreach ($item in $officialItems) {
@@ -73,6 +78,10 @@ function Assert-ProfileRegistry {
             [string]::IsNullOrWhiteSpace([string](Get-ProfileField $item 'auth_file'))) {
             throw "官方账号档案缺少名称、账号标识或认证文件。"
         }
+        $snapshotIdentity = [string](Get-ProfileField $item 'model_catalog_snapshot_identity')
+        if ($snapshotIdentity -and $snapshotIdentity -notmatch '^[a-f0-9]{64}$') { throw '官方模型目录快照来源标识无效。' }
+        $snapshotHash = [string](Get-ProfileField $item 'model_catalog_snapshot_sha256')
+        if ($snapshotHash -and $snapshotHash -notmatch '^[a-f0-9]{64}$') { throw '官方模型目录快照校验值无效。' }
     }
 }
 
@@ -184,6 +193,154 @@ function Get-OfficialProfileIdFromAuth {
     return "official-$owner"
 }
 
+function Get-OfficialModelCatalogPath {
+    param([Parameter(Mandatory = $true)][string]$ProfileId)
+    if ($ProfileId -notmatch '^official-[a-f0-9]{64}$') { throw '官方模型目录档案 ID 无效。' }
+    return Join-Path (Join-Path $DataDir 'model-catalogs') ($ProfileId + '.json')
+}
+
+function Get-ApiModelCatalogPath {
+    param($Entry)
+    $mode = [string](Get-ProfileField $Entry 'model_catalog_mode')
+    if (-not $mode) { $mode = 'manual' }
+    if ($mode -eq 'official') {
+        $sourceId = [string](Get-ProfileField $Entry 'model_catalog_source_official_id')
+        if ($sourceId -match '^official-[a-f0-9]{64}$') { return Get-OfficialModelCatalogPath $sourceId }
+        return ''
+    }
+    $path = [string](Get-ProfileField $Entry 'model_catalog_json')
+    if ([string]::IsNullOrWhiteSpace($path)) { return $RelayModelCatalogPath }
+    try { return Resolve-NormalizedPath $path } catch { return $path }
+}
+
+function ConvertTo-RustDebugString {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    $escaped = New-Object Text.StringBuilder
+    foreach ($character in $Value.ToCharArray()) {
+        switch ([int]$character) {
+            0 { [void]$escaped.Append('\0'); continue }
+            9 { [void]$escaped.Append('\t'); continue }
+            10 { [void]$escaped.Append('\n'); continue }
+            13 { [void]$escaped.Append('\r'); continue }
+            34 { [void]$escaped.Append('\"'); continue }
+            92 { [void]$escaped.Append('\\'); continue }
+            default {
+                if ([char]::IsControl($character)) { [void]$escaped.Append(('\u{{{0:x}}}' -f [int]$character)) }
+                else { [void]$escaped.Append($character) }
+            }
+        }
+    }
+    return '"' + $escaped.ToString() + '"'
+}
+
+function Get-CodexOfficialModelCacheIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$AuthText,
+        [Parameter(Mandatory = $true)][string]$ClientVersion,
+        [AllowNull()][string]$Organization,
+        [AllowNull()][string]$Project
+    )
+    # Local-only verification of the native models-cache-v1 digest:
+    # https://github.com/openai/codex/blob/main/codex-rs/model-provider/src/models_identity.rs
+    # An unfamiliar provider/auth layout simply leaves the old snapshot intact.
+    $auth = Read-DesktopJson $AuthText
+    if ([string](Get-ProfileField $auth 'auth_mode') -cne 'chatgpt') { return @() }
+    $tokens = Get-ProfileField $auth 'tokens'
+    $idToken = [string](Get-ProfileField $tokens 'id_token')
+    $parts = $idToken.Split('.')
+    if ($parts.Length -ne 3) { return @() }
+    try {
+        $payload = $parts[1].Replace('-','+').Replace('_','/')
+        $payload = $payload.PadRight([int]([Math]::Ceiling($payload.Length / 4.0) * 4), '=')
+        $claims = Read-DesktopJson ($script:Utf8NoBom.GetString([Convert]::FromBase64String($payload)))
+    }
+    catch { return @() }
+
+    $namespace = Get-ProfileField $claims 'https://api.openai.com/auth'
+    if ($null -eq $namespace) { return @() }
+    $accountId = [string](Get-ProfileField $tokens 'account_id')
+    $userId = [string](Get-ProfileField $namespace 'chatgpt_user_id')
+    if (-not $userId) { $userId = [string](Get-ProfileField $namespace 'user_id') }
+    $email = [string](Get-ProfileField $claims 'email')
+    if (-not $email) { $email = [string](Get-ProfileField (Get-ProfileField $claims 'https://api.openai.com/profile') 'email') }
+    # Only stable account metadata is supported. Other native auth modes or
+    # provider layouts fail closed rather than guessing a cache owner.
+    if (-not $accountId -or (-not $userId -and -not $email) -or -not $ClientVersion) { return @() }
+
+    $planRaw = [string](Get-ProfileField $namespace 'chatgpt_plan_type')
+    $planVariants = @{
+        free='Free'; go='Go'; plus='Plus'; pro='Pro'; prolite='ProLite'; promax='ProMax'; team='Team'
+        self_serve_business_prolite='SelfServeBusinessProLite'; self_serve_business_usage_based='SelfServeBusinessUsageBased'
+        business='Business'; ent26='Ent26'; enterprise_cbp_automation='EnterpriseCbpAutomation'
+        enterprise_cbp_usage_based='EnterpriseCbpUsageBased'; enterprise='Enterprise'; hc='Enterprise'
+        education='Edu'; edu='Edu'; edu_plus='EduPlus'; edu_pro='EduPro'; sci='Sci'; sci_plus='SciPlus'
+    }
+    $planVariant = if ($planRaw) { [string]$planVariants[$planRaw.ToLowerInvariant()] } else { '' }
+    $canonicalPlan = if (-not $planRaw) { '' } elseif ($planVariant) {
+        switch ($planRaw.ToLowerInvariant()) {
+            {$_ -in @('hc')} { 'enterprise'; break }
+            {$_ -in @('education')} { 'edu'; break }
+            default { $planRaw.ToLowerInvariant() }
+        }
+    } else { $planRaw }
+    $accountPlan = if ($planVariant) { 'Some(' + $planVariant + ')' } else { 'Some(Unknown)' }
+    $rawPlan = if ($planRaw) { 'Some(' + (ConvertTo-RustDebugString $canonicalPlan) + ')' } else { 'None' }
+    $fedramp = [bool](Get-ProfileField $namespace 'chatgpt_account_is_fedramp')
+
+    $identities = New-Object Collections.Generic.List[string]
+    foreach ($residency in @('', 'us')) {
+        $stream = New-Object IO.MemoryStream
+        try {
+            $fields = New-Object Collections.Generic.List[byte[]]
+            $fields.Add($script:Utf8NoBom.GetBytes('models-cache-v1'))
+            $fields.Add($script:Utf8NoBom.GetBytes('OpenAI'))
+            $fields.Add($script:Utf8NoBom.GetBytes('https://chatgpt.com/backend-api/codex'))
+            $fields.Add([BitConverter]::GetBytes([UInt64]0))
+            $fields.Add([byte[]]@(1))
+            $fields.Add([byte[]]@(0))
+            $fields.Add($script:Utf8NoBom.GetBytes('Some(Chatgpt)'))
+            $fields.Add($script:Utf8NoBom.GetBytes('Some(' + (ConvertTo-RustDebugString $accountId) + ')'))
+            $fields.Add($script:Utf8NoBom.GetBytes($(if($userId){'Some(' + (ConvertTo-RustDebugString $userId) + ')'}else{'None'})))
+            $fields.Add($script:Utf8NoBom.GetBytes($(if($email){'Some(' + (ConvertTo-RustDebugString $email) + ')'}else{'None'})))
+            $fields.Add($script:Utf8NoBom.GetBytes($accountPlan))
+            $fields.Add($script:Utf8NoBom.GetBytes($rawPlan))
+            $fields.Add([byte[]]@([byte]$(if($fedramp){1}else{0})))
+
+            $headers = New-Object Collections.Generic.List[object]
+            $headers.Add([pscustomobject]@{Name='version';Value=$ClientVersion})
+            if ($Organization) { $headers.Add([pscustomobject]@{Name='openai-organization';Value=$Organization}) }
+            if ($Project) { $headers.Add([pscustomobject]@{Name='openai-project';Value=$Project}) }
+            if ($residency) { $headers.Add([pscustomobject]@{Name='x-openai-internal-codex-residency';Value=$residency}) }
+            $orderedHeaders = @($headers | Sort-Object -Property Name)
+            $fields.Add([BitConverter]::GetBytes([UInt64]$orderedHeaders.Count))
+            foreach ($header in $orderedHeaders) {
+                $fields.Add($script:Utf8NoBom.GetBytes([string]$header.Name))
+                $fields.Add($script:Utf8NoBom.GetBytes([string]$header.Value))
+            }
+
+            foreach ($field in $fields) {
+                $length = [BitConverter]::GetBytes([UInt64]$field.Length)
+                $stream.Write($length,0,$length.Length)
+                $stream.Write($field,0,$field.Length)
+            }
+            $identities.Add((Get-Sha256Hex $stream.ToArray()))
+        }
+        finally { $stream.Dispose() }
+    }
+    return $identities.ToArray()
+}
+
+function Test-CodexOfficialModelCacheSource {
+    param([string]$AuthText,$Cache)
+    $cachedIdentity = [string](Get-ProfileField $Cache 'identity')
+    $version = [string](Get-ProfileField $Cache 'client_version')
+    if ($cachedIdentity -notmatch '^[a-f0-9]{64}$' -or -not $version) { return $false }
+    $identities = @(Get-CodexOfficialModelCacheIdentity -AuthText $AuthText -ClientVersion $version `
+        -Organization ([Environment]::GetEnvironmentVariable('OPENAI_ORGANIZATION','Process')) `
+        -Project ([Environment]::GetEnvironmentVariable('OPENAI_PROJECT','Process')))
+    return $cachedIdentity -in $identities
+}
+
 function Get-NewApiProfileId {
     return 'api-' + ([Guid]::NewGuid().ToString('N'))
 }
@@ -224,6 +381,8 @@ function Save-ApiProfile {
             name = if ([string]::IsNullOrWhiteSpace($Name)) { Get-DefaultProfileName api $index } else { $Name.Trim() }
             base_url = $BaseUrl
             model_catalog_json = if ($null -eq $ModelCatalogPath) { '' } else { $ModelCatalogPath }
+            model_catalog_mode = 'manual'
+            model_catalog_source_official_id = ''
             auth_file = "$id.auth.dpapi"
             created_utc = [DateTime]::UtcNow.ToString('o')
             updated_utc = [DateTime]::UtcNow.ToString('o')
@@ -233,13 +392,75 @@ function Save-ApiProfile {
     else {
         if (-not [string]::IsNullOrWhiteSpace($Name)) { $entry['name'] = $Name.Trim() }
         $entry['base_url'] = $BaseUrl
-        if ($null -ne $ModelCatalogPath) { $entry['model_catalog_json'] = $ModelCatalogPath }
+        # A credential refresh must not replace the selected manual path or
+        # official snapshot source with the config path currently in use.
+        if (-not [string](Get-ProfileField $entry 'model_catalog_mode')) {
+            # Legacy profiles have no catalog policy yet. Capture their live
+            # manual reference once before subsequent account switches.
+            if (-not [string]::IsNullOrWhiteSpace($ModelCatalogPath)) { $entry['model_catalog_json'] = $ModelCatalogPath }
+            $entry['model_catalog_mode'] = 'manual'
+        }
     }
     [IO.Directory]::CreateDirectory($script:ProfileAuthDirectory) | Out-Null
     $authPath = Get-ProfileAuthPath api ([string](Get-ProfileField $entry 'auth_file'))
     if ($SetActive) { Set-ActiveProfileEntry $registry api ([string](Get-ProfileField $entry 'id')) }
     Commit-ProfileFiles @((New-EncryptedAuthFile $authPath $AuthText api),(New-ProfileRegistryFile $registry))
     return [pscustomobject]@{ Registry = $registry; Entry = $entry }
+}
+
+function Sync-OfficialModelCatalogSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$AuthText,
+        [Parameter(Mandatory = $true)][string]$ProfileId
+    )
+    $snapshotPath = ''
+    try {
+        if ((Get-OfficialProfileIdFromAuth $AuthText) -cne $ProfileId) { throw '当前官方身份与目标档案不一致。' }
+        $currentConfig = Read-TextFile $ConfigPath
+        if ((Get-LiveMode -ConfigText $currentConfig -AuthText $AuthText) -ne 'official' -or
+            -not [string]::IsNullOrWhiteSpace([string](Get-TopLevelTomlValue -Text $currentConfig -Key 'openai_base_url')) -or
+            -not [string]::IsNullOrWhiteSpace([string](Get-TopLevelTomlValue -Text $currentConfig -Key 'model_catalog_json'))) {
+            throw '当前不是原生官方模型目录配置。'
+        }
+        $snapshotPath = Get-OfficialModelCatalogPath $ProfileId
+        $cachePath = Join-Path $CodexHome 'models_cache.json'
+        if (-not [IO.File]::Exists($cachePath)) { throw '未找到本地官方模型缓存。' }
+        $cache = Read-DesktopJson (Read-TextFile $cachePath)
+        $models = Get-ProfileField $cache 'models'
+        if ($models -isnot [System.Collections.IList] -or $models.Count -eq 0) { throw '缓存中的 models 不是非空数组。' }
+        foreach ($model in $models) {
+            if ($model -isnot [System.Collections.IDictionary] -or
+                [string]::IsNullOrWhiteSpace([string](Get-ProfileField $model 'slug'))) { throw '缓存中的模型条目格式无效。' }
+        }
+        if (-not (Test-CodexOfficialModelCacheSource -AuthText $AuthText -Cache $cache)) {
+            throw '缓存来源无法与当前官方账号对应。'
+        }
+
+        $registry = Read-ProfileRegistry
+        $profile = Find-ProfileEntry $registry official $ProfileId
+        $snapshotText = (ConvertTo-Json -InputObject ([ordered]@{models=@($models)}) -Depth 100) + [Environment]::NewLine
+        $snapshotBytes = $script:Utf8NoBom.GetBytes($snapshotText)
+        $profile['model_catalog_snapshot_updated_utc'] = [DateTime]::UtcNow.ToString('o')
+        $profile['model_catalog_snapshot_client_version'] = [string](Get-ProfileField $cache 'client_version')
+        $profile['model_catalog_snapshot_identity'] = [string](Get-ProfileField $cache 'identity')
+        $profile['model_catalog_snapshot_sha256'] = Get-Sha256Hex $snapshotBytes
+        Commit-ProfileFiles @(
+            [pscustomobject]@{Path=$snapshotPath;TargetBytes=$snapshotBytes},
+            (New-ProfileRegistryFile $registry)
+        )
+        return [pscustomobject]@{Succeeded=$true;Message=('已同步官方账号模型目录（' + @($models).Count + ' 项）。');Path=$snapshotPath}
+    }
+    catch {
+        $reason = [string]$_.Exception.Message
+        if ($reason -match 'models_cache|JSON|输入字符串|分析') { $reason = '本地缓存格式无效' }
+        elseif ($reason -match '缓存来源|身份|目标档案') { $reason = '无法确认本地缓存属于当前官方账号' }
+        elseif ($reason -match 'models 不是|条目格式') { $reason = '本地缓存中的模型目录格式无效' }
+        elseif ($reason -match '当前不是') { $reason = '当前不是原生官方配置' }
+        elseif ($reason -match '未找到') { $reason = '本地尚无官方模型缓存' }
+        else { $reason = '读取或保存快照失败' }
+        if (-not $snapshotPath) { try { $snapshotPath = Get-OfficialModelCatalogPath $ProfileId } catch {} }
+        return [pscustomobject]@{Succeeded=$false;Message=('模型目录未更新（' + $reason + '），保留已有快照。');Path=$snapshotPath}
+    }
 }
 
 function Save-OfficialProfile {

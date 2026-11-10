@@ -611,17 +611,24 @@ function New-ModeConfigText {
     }
 
     $overrideCatalog = $PSBoundParameters.ContainsKey('ModelCatalogPathOverride')
-    $existingCatalogPath = if ($overrideCatalog) { [string]$ModelCatalogPathOverride } else { [string](Get-TopLevelTomlValue -Text $CurrentText -Key "model_catalog_json") }
+    $existingCatalogPath = [string](Get-TopLevelTomlValue -Text $CurrentText -Key "model_catalog_json")
     $ownsRelayCatalog = Test-RelayModelCatalogPath $existingCatalogPath
-    $activateRelayCatalog = $Mode -eq "api" -and ($ownsRelayCatalog -or [string]::IsNullOrWhiteSpace($existingCatalogPath))
-    $apiCatalogPath = $null
-    if ($Mode -eq "api") {
-        $apiCatalogPath = if ($activateRelayCatalog) { $RelayModelCatalogPath } else { $existingCatalogPath }
-        # The relay model directory is manually maintained by the user. Keep
-        # the existing file and only reference it; never refresh or validate it.
-        if ($activateRelayCatalog -and -not [IO.File]::Exists($RelayModelCatalogPath)) {
-            $activateRelayCatalog = $false
-            $apiCatalogPath = ""
+    $catalogManagedByProfile = $null -ne $ProfileEntry
+    $apiCatalogPath = ''
+    if ($Mode -eq 'api') {
+        if ($catalogManagedByProfile) {
+            $apiCatalogPath = Get-ApiModelCatalogPath $ProfileEntry
+        }
+        elseif ($overrideCatalog) {
+            $apiCatalogPath = [string]$ModelCatalogPathOverride
+            if ([string]::IsNullOrWhiteSpace($apiCatalogPath)) { $apiCatalogPath = $RelayModelCatalogPath }
+        }
+        else {
+            $apiCatalogPath = if ([string]::IsNullOrWhiteSpace($existingCatalogPath) -or $ownsRelayCatalog) { $RelayModelCatalogPath } else { $existingCatalogPath }
+        }
+        if ($apiCatalogPath) {
+            $apiCatalogPath = Resolve-NormalizedPath $apiCatalogPath
+            if (-not [IO.File]::Exists($apiCatalogPath)) { $apiCatalogPath = '' }
         }
     }
 
@@ -671,10 +678,6 @@ function New-ModeConfigText {
                 throw "config.toml 顶层存在重复的 model_catalog_json。"
             }
             $modelCatalogSeen = $true
-            if ($Mode -eq "official" -or $ownsRelayCatalog -or $overrideCatalog) {
-                continue
-            }
-            $result.Add($line)
             continue
         }
 
@@ -708,7 +711,7 @@ function New-ModeConfigText {
         $quotedUrl = ConvertTo-Json -Compress ([string]$RelayBaseUrl)
         $result.Insert($insertIndex, "openai_base_url = $quotedUrl")
         $insertIndex++
-        if (($activateRelayCatalog -or $overrideCatalog) -and -not [string]::IsNullOrWhiteSpace($apiCatalogPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($apiCatalogPath)) {
             $quotedCatalogPath = ConvertTo-Json -Compress ([string]$apiCatalogPath)
             $result.Insert($insertIndex, "model_catalog_json = $quotedCatalogPath")
             $insertIndex++
@@ -2176,7 +2179,6 @@ function Add-ApiProfileInteractively {
     $catalog = (Read-SwitcherPrompt 'model_catalog_json' '模型目录 JSON 路径（可留空）').Trim()
     if (-not [string]::IsNullOrWhiteSpace($catalog)) {
         $catalog = Resolve-NormalizedPath $catalog
-        if (-not [IO.File]::Exists($catalog)) { throw "模型目录不存在：$catalog" }
     }
     $plainKey = Read-SwitcherPrompt 'api_key' 'API Key（输入内容不会回显）' -Secret
     try {
@@ -2303,7 +2305,7 @@ function Show-SwitcherStatus {
 }
 
 function Switch-ToOfficial {
-    param([switch]$SkipHistoryCheck, [AllowNull()][string]$ProfileName)
+    param([switch]$SkipHistoryCheck, [AllowNull()][string]$ProfileName, [switch]$HistoryAlreadyPrepared)
 
     $state = Require-State
     Assert-NoExternalAuthOverrides
@@ -2313,7 +2315,7 @@ function Switch-ToOfficial {
     $currentInfo = Get-AuthInfoFromText $currentAuth
     $startingConfig = Read-TextFile $ConfigPath
     [void](Get-LiveMode -ConfigText $startingConfig -AuthText $currentAuth)
-    if (-not $SkipHistoryCheck) {
+    if (-not $SkipHistoryCheck -and -not $HistoryAlreadyPrepared) {
         Invoke-HistoryCompatibilityPreflight
     }
     $profileRegistry = Ensure-ProfileRegistry $state
@@ -2325,7 +2327,16 @@ function Switch-ToOfficial {
 
     if ($null -ne $selectedOfficial) {
         $selectedOfficialId = [string](Get-ProfileField $selectedOfficial.Entry 'id')
-        [void](Capture-CurrentCredentials $state)
+        $sourceKind = Capture-CurrentCredentials $state
+        $currentOfficialId = [string](Get-ProfileField $state 'active_official_profile_id')
+        if (-not $SkipHistoryCheck -and $sourceKind -eq 'official' -and $currentOfficialId -and $currentOfficialId -cne $selectedOfficialId) {
+            try {
+                $syncResult = Sync-OfficialModelCatalogSnapshot -AuthText (Read-AuthText) -ProfileId $currentOfficialId
+                Write-Host $syncResult.Message
+            } catch {
+                Write-Host '模型目录未更新，保留已有快照。'
+            }
+        }
         # The live account may have refreshed its tokens since the last
         # snapshot. Re-read after capture before selecting the same account.
         $selectedOfficial = Read-SelectedProfileAuth -Kind official -Selector $selectedOfficialId
@@ -2427,21 +2438,35 @@ function Switch-ToOfficial {
 }
 
 function Switch-ToApi {
-    param([switch]$SkipHistoryCheck, [AllowNull()][string]$ProfileName)
+    param([switch]$SkipHistoryCheck, [AllowNull()][string]$ProfileName, [switch]$HistoryAlreadyPrepared)
     $state = Require-State
     Assert-NoExternalAuthOverrides
     Assert-CodexProcessesStopped
     Invoke-ProjectProjectionPreflight
-    [void](Capture-CurrentCredentials $state)
+    $sourceKind = Capture-CurrentCredentials $state
+    if (-not $SkipHistoryCheck -and $sourceKind -eq 'official') {
+        $officialProfileId = [string](Get-ProfileField $state 'active_official_profile_id')
+        if ($officialProfileId) {
+            try {
+                $syncResult = Sync-OfficialModelCatalogSnapshot -AuthText (Read-AuthText) -ProfileId $officialProfileId
+                Write-Host $syncResult.Message
+            } catch {
+                Write-Host '模型目录未更新，保留已有快照。'
+            }
+        }
+    }
     $selected = Read-SelectedProfileAuth -Kind api -Selector $ProfileName
     $relayAuth = [string]$selected.AuthText
     $baseUrl = [string](Get-ProfileField $selected.Entry 'base_url')
-    $catalogPath = [string](Get-ProfileField $selected.Entry 'model_catalog_json')
     if ([string]::IsNullOrWhiteSpace($baseUrl)) { throw '选中的中转档案没有地址。' }
-    if (-not $SkipHistoryCheck) {
+    if (-not $SkipHistoryCheck -and -not $HistoryAlreadyPrepared) {
         Invoke-HistoryCompatibilityPreflight
     }
-    Invoke-ModeSwap -Mode "api" -TargetAuthText $relayAuth -State $state -RelayBaseUrl $baseUrl -ModelCatalogPath $catalogPath -ProfileId ([string](Get-ProfileField $selected.Entry 'id'))
+    Invoke-ModeSwap -Mode "api" -TargetAuthText $relayAuth -State $state -RelayBaseUrl $baseUrl -ProfileId ([string](Get-ProfileField $selected.Entry 'id'))
+    $effectiveCatalogPath = Get-ApiModelCatalogPath $selected.Entry
+    if (-not $effectiveCatalogPath -or -not [IO.File]::Exists($effectiveCatalogPath)) {
+        Write-Host '此 API 账号尚无可用模型目录，模型列表可能不完整。'
+    }
     Write-Host "已切换到中转 API 档案 '$([string](Get-ProfileField $selected.Entry 'name'))'。请重新启动 Codex Desktop。"
 }
 
@@ -2476,11 +2501,11 @@ function Invoke-AutoSwitch {
         $script:OperationStage = "switch-official"
         # Initialization already checked history under this operation's lock.
         # Do not repeat a full forced scan before its first actual switch.
-        Switch-ToOfficial -SkipHistoryCheck:$historyPreparedDuringInitialization -ProfileName $ProfileName
+        Switch-ToOfficial -HistoryAlreadyPrepared:$historyPreparedDuringInitialization -ProfileName $ProfileName
     }
     else {
         $script:OperationStage = "switch-api"
-        Switch-ToApi -SkipHistoryCheck:$historyPreparedDuringInitialization -ProfileName $ProfileName
+        Switch-ToApi -HistoryAlreadyPrepared:$historyPreparedDuringInitialization -ProfileName $ProfileName
     }
     Write-Host ("本次一键切换总耗时：{0:N1} 秒（如有首次登录，包含等待登录的时间）。" -f $switchTimer.Elapsed.TotalSeconds)
     # Statistics must not turn a completed auth/config transaction into a

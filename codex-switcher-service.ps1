@@ -88,8 +88,11 @@ function Test-ProfileTransactionPath {
     param([string]$Path)
     $normalized = Resolve-NormalizedPath $Path
     if ($normalized -in @($script:ProfileRegistryPath,$StatePath,$RelayAuthPath,$OfficialAuthPath,$script:SettingsPath)) { return $true }
-    return (Split-Path -Parent $normalized) -ieq $script:ProfileAuthDirectory -and
-        ([IO.Path]::GetFileName($normalized) -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.auth\.dpapi$')
+    if ((Split-Path -Parent $normalized) -ieq $script:ProfileAuthDirectory -and
+        ([IO.Path]::GetFileName($normalized) -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.auth\.dpapi$')) { return $true }
+    $catalogRoot = Resolve-NormalizedPath (Join-Path $DataDir 'model-catalogs')
+    return (Split-Path -Parent $normalized) -ieq $catalogRoot -and
+        ([IO.Path]::GetFileName($normalized) -match '^official-[a-f0-9]{64}\.json$')
 }
 
 function Restore-ProfileTransaction {
@@ -239,10 +242,21 @@ function Set-ProfileDetails {
     $files = @()
     if ($Kind -eq 'api') {
         if ($Values.Contains('base_url')) { Assert-RelayBaseUrl ([string]$Values['base_url']); $entry['base_url'] = ([string]$Values['base_url']).Trim() }
+        if ($Values.Contains('model_catalog_mode')) {
+            $catalogMode = ([string]$Values['model_catalog_mode']).Trim()
+            if ($catalogMode -notin @('manual','official')) { throw '模型目录维护方式无效。' }
+            $entry['model_catalog_mode'] = $catalogMode
+        }
+        if ($Values.Contains('model_catalog_source_official_id')) {
+            $sourceId = ([string]$Values['model_catalog_source_official_id']).Trim()
+            if ($sourceId -and $sourceId -notmatch '^official-[a-f0-9]{64}$') { throw '官方模型目录来源无效。' }
+            $entry['model_catalog_source_official_id'] = $sourceId
+        }
+        if ([string](Get-ProfileField $entry 'model_catalog_mode') -eq 'official' -and
+            -not [string](Get-ProfileField $entry 'model_catalog_source_official_id')) { throw '跟随官方目录时请选择一个官方账号来源。' }
         if ($Values.Contains('model_catalog_json')) {
             $catalog = ([string]$Values['model_catalog_json']).Trim()
-            if ($catalog -and -not [IO.File]::Exists((Resolve-NormalizedPath $catalog))) { throw '指定的模型目录文件不存在。' }
-            $entry['model_catalog_json'] = $catalog
+            $entry['model_catalog_json'] = if ($catalog) { Resolve-NormalizedPath $catalog } else { '' }
         }
         if ($Values.Contains('api_key') -and -not [string]::IsNullOrWhiteSpace([string]$Values['api_key'])) {
             $text = ConvertTo-Json -InputObject @{OPENAI_API_KEY=[string]$Values['api_key']} -Compress
@@ -366,6 +380,19 @@ function Get-SwitcherViewState {
         $liveId = Get-LiveProfileId
         if ([IO.File]::Exists($AuthPath) -and [IO.File]::Exists($ConfigPath)) { $mode = Get-LiveMode (Read-TextFile $ConfigPath) (Read-AuthText) }
     } catch { $issue=$_.Exception.Message }
+    $officialCatalogSources = @{}
+    foreach ($officialEntry in @($registry.official_profiles)) {
+        $officialId = [string](Get-ProfileField $officialEntry 'id')
+        $snapshotPath = Get-OfficialModelCatalogPath $officialId
+        $officialCatalogSources[$officialId] = [pscustomobject]@{
+            Id=$officialId
+            Name=[string](Get-ProfileField $officialEntry 'name')
+            SnapshotPath=$snapshotPath
+            SnapshotExists=[IO.File]::Exists($snapshotPath)
+            UpdatedUtc=[string](Get-ProfileField $officialEntry 'model_catalog_snapshot_updated_utc')
+            ClientVersion=[string](Get-ProfileField $officialEntry 'model_catalog_snapshot_client_version')
+        }
+    }
     $profiles = @()
     foreach ($kind in @('official','api')) {
         foreach ($entry in @($registry[(Get-ProfileCollectionName $kind)])) {
@@ -375,13 +402,34 @@ function Get-SwitcherViewState {
                 if ($kind -eq 'official') { $who=Get-OfficialIdentitySummary $text; $status=$who.Status;$identity=$who.Email; if(-not $identity){$identity=$who.Account} }
             } catch { $status='凭据不可用，请更新或重新登录' }
             $policy = Get-SwitcherModePolicy -Mode $kind -Entry $entry
-            $profiles += [pscustomobject]@{Id=[string]$entry.id;Kind=$kind;Name=[string]$entry.name;BaseUrl=[string](Get-ProfileField $entry 'base_url');Model=$policy.Model;ContextWindow=$policy.ContextWindow;ProxyPolicy=$policy.Proxy;Catalog=[string](Get-ProfileField $entry 'model_catalog_json');Active=($liveId -ceq [string]$entry.id);Identity=$identity;Status=$status}
+            $catalogMode=[string](Get-ProfileField $entry 'model_catalog_mode');if(-not $catalogMode){$catalogMode='manual'}
+            $catalogSourceId=[string](Get-ProfileField $entry 'model_catalog_source_official_id')
+            $catalogSource=if($catalogMode -eq 'official' -and $officialCatalogSources.ContainsKey($catalogSourceId)){$officialCatalogSources[$catalogSourceId]}else{$null}
+            $catalogPath=if($kind -eq 'api'){Get-ApiModelCatalogPath $entry}else{Get-OfficialModelCatalogPath ([string]$entry.id)}
+            $catalogUpdated='';$catalogVersion='';$catalogSourceName=''
+            if($kind -eq 'api' -and $catalogMode -eq 'official'){
+                if($null -ne $catalogSource){$catalogUpdated=$catalogSource.UpdatedUtc;$catalogVersion=$catalogSource.ClientVersion;$catalogSourceName=$catalogSource.Name}
+                else{
+                    $catalogSourceName=$catalogSourceId
+                    if([IO.File]::Exists($catalogPath)){try{$catalogUpdated=[IO.File]::GetLastWriteTimeUtc($catalogPath).ToString('o')}catch{}}
+                }
+            }
+            elseif($kind -eq 'api' -and [IO.File]::Exists($catalogPath)){
+                try{$catalogUpdated=[IO.File]::GetLastWriteTimeUtc($catalogPath).ToString('o')}catch{}
+            }
+            $profiles += [pscustomobject]@{
+                Id=[string]$entry.id;Kind=$kind;Name=[string]$entry.name;BaseUrl=[string](Get-ProfileField $entry 'base_url')
+                Model=$policy.Model;ContextWindow=$policy.ContextWindow;ProxyPolicy=$policy.Proxy;Catalog=[string](Get-ProfileField $entry 'model_catalog_json')
+                CatalogMode=$catalogMode;CatalogSourceOfficialProfileId=$catalogSourceId;CatalogEffectivePath=$catalogPath
+                CatalogSourceName=$catalogSourceName;CatalogUpdatedUtc=$catalogUpdated;CatalogClientVersion=$catalogVersion
+                CatalogFileExists=[IO.File]::Exists($catalogPath);Active=($liveId -ceq [string]$entry.id);Identity=$identity;Status=$status
+            }
         }
     }
     $projectCount=0
     $globalPath=Join-Path $CodexHome '.codex-global-state.json'
     if([IO.File]::Exists($globalPath)) { try { $root=Read-DesktopJson (Read-TextFile $globalPath);$projects=Get-ProfileField $root 'local-projects';if($projects -is [Collections.IDictionary]){$projectCount=$projects.Count} }catch{} }
-    return [pscustomobject]@{Profiles=$profiles;Mode=$mode;Issue=$issue;CodexHome=$CodexHome;DataDir=$DataDir;ProjectCount=$projectCount;Initialized=($null -ne (Read-State))}
+    return [pscustomobject]@{Profiles=$profiles;OfficialCatalogSources=@($officialCatalogSources.Values);Mode=$mode;Issue=$issue;CodexHome=$CodexHome;DataDir=$DataDir;DefaultModelCatalogPath=$RelayModelCatalogPath;ProjectCount=$projectCount;Initialized=($null -ne (Read-State))}
 }
 
 function Read-SwitcherPrompt {
@@ -438,7 +486,7 @@ function Invoke-SwitcherRequest {
             }
             default { throw '不支持的图形界面操作。' }
         }
-        if($action -in @('add-api','add-official') -and ((Get-ProfileField $request 'model') -or (Get-ProfileField $request 'context_window') -or (Get-ProfileField $request 'proxy_policy') -or (Get-ProfileField $request 'settings_scope'))) {
+        if($action -in @('add-api','add-official') -and ((Get-ProfileField $request 'model') -or (Get-ProfileField $request 'context_window') -or (Get-ProfileField $request 'proxy_policy') -or (Get-ProfileField $request 'settings_scope') -or (Get-ProfileField $request 'model_catalog_mode') -or (Get-ProfileField $request 'model_catalog_source_official_id'))) {
             if($script:LastSavedProfileId){Set-ProfileDetails $(if($action -eq 'add-api'){'api'}else{'official'}) $script:LastSavedProfileId $request}
         }
     } finally { $script:OperationInput=$null }

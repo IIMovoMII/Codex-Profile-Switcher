@@ -48,6 +48,17 @@ try{
                         if($editor.Fields.base_url_row.Visibility -ne 'Visible'){throw 'Changing the connection type did not update the form.'}
                         $editor.Fields.base_url.Text='https://callback.example.com/v1';$editor.Fields.api_key.Password='scope-test-only-key'
                     }
+                    if($editor.Fields.kind.SelectedIndex -eq 1){
+                        $manualPath=Join-Path $state.Store 'callback-manual-models.json'
+                        $editor.Fields.model_catalog_json.Text=$manualPath
+                        $editor.Fields.model_catalog_mode.SelectedItem=@($editor.Fields.model_catalog_mode.Items|Where-Object Value -eq 'official')[0]
+                        if($editor.Fields.model_catalog_source_official_id.SelectedIndex -lt 0){$editor.Fields.model_catalog_source_official_id.SelectedIndex=0}
+                        if($editor.Fields.catalog_panel.Visibility -ne 'Visible' -or
+                            $editor.Fields.model_catalog_source_official_id_row.Visibility -ne 'Visible' -or
+                            $editor.Fields.catalog_path_display.Text -notlike '*model-catalogs*'){throw 'Catalog mode/source callbacks failed in the normal modal scope.'}
+                        $editor.Fields.model_catalog_mode.SelectedItem=@($editor.Fields.model_catalog_mode.Items|Where-Object Value -eq 'manual')[0]
+                        if($editor.Fields.catalog_path_display.Text -cne $manualPath){throw 'Returning to manual mode lost the entered path.'}
+                    }
                     $editor.Save.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
                     if($editor.Error.Text){throw $editor.Error.Text}
                 }

@@ -1,11 +1,12 @@
 ﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),
+    [string]$OutputDirectory,
     [string]$CompilerPath
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $PSScriptRoot 'dist' }
 . (Join-Path $PSScriptRoot 'distribution-files.ps1')
 
 $version = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'version.txt')).Trim()

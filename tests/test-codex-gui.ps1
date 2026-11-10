@@ -77,6 +77,25 @@ try{
     $live=@($script:View.Profiles|Where-Object Active)[0]
     $editor=Show-ProfileEditor $live -NoDisplay
     Assert-Gui ($editor.Fields.proxy_help.ToolTip -is [Windows.Controls.ToolTip]) 'The proxy hover explanation was not attached to the help circle.'
+    $catalogPath=Join-Path $testRoot 'manual catalog.json'
+    Write-AtomicText $catalogPath '{"models":[{"slug":"gui-manual","display_name":"GUI manual"}]}'
+    $editor.Fields.model_catalog_json.Text=$catalogPath
+    Assert-Gui ($editor.Fields.catalog_path_display.Text -ceq $catalogPath -and
+        $editor.Fields.catalog_status.Text -match '手动维护.*更新时间') 'The manual catalog did not show its real path or update time.'
+    $editor.Window.Content.Children[1].ScrollToEnd()
+    Export-Gui 'catalog-manual' $editor.Window.Content 620 850
+    $source=@($script:View.OfficialCatalogSources)[0]
+    $editor.Fields.model_catalog_mode.SelectedItem=@($editor.Fields.model_catalog_mode.Items|Where-Object Value -eq 'official')[0]
+    $editor.Fields.model_catalog_source_official_id.SelectedItem=@($editor.Fields.model_catalog_source_official_id.Items|Where-Object Value -eq $source.Id)[0]
+    Assert-Gui ($editor.Fields.model_catalog_json_row.Visibility -eq 'Collapsed' -and
+        $editor.Fields.model_catalog_source_official_id_row.Visibility -eq 'Visible' -and
+        $editor.Fields.catalog_panel.Visibility -eq 'Visible' -and $editor.Fields.catalog_open_file.Visibility -eq 'Visible' -and
+        $editor.Fields.catalog_open_folder.Visibility -eq 'Visible' -and
+        $editor.Fields.catalog_path_display.Text -ceq $source.SnapshotPath -and
+        $editor.Fields.catalog_status.Text.Contains($source.Name) -and
+        $editor.Fields.model_catalog_json.Text -ceq $catalogPath) 'Follow mode hid maintenance controls or lost the manual path/source.'
+    $editor.Window.Content.Children[1].ScrollToEnd()
+    Export-Gui 'catalog-follow' $editor.Window.Content 620 850
     $editor.Fields.context_window.Text='8192';$editor.Fields.proxy_policy.SelectedItem=@($editor.Fields.proxy_policy.Items|Where-Object Value -eq 'direct')[0]
     Export-Gui 'account-settings' $editor.Window.Content 560 700
     $editor.Window.Content.Children[1].ScrollToEnd();$editor.Window.Content.UpdateLayout()
@@ -88,6 +107,8 @@ try{
     Wait-GuiOperation
     $saved=Find-ProfileEntry (Read-ProfileRegistry) api $live.Id
     Assert-Gui ($saved.context_window -eq '8192' -and $saved.proxy_policy -eq 'direct' -and $saved.settings_scope -eq 'account') 'Settings were not saved independently on the account.'
+    Assert-Gui ($saved.model_catalog_mode -ceq 'official' -and $saved.model_catalog_source_official_id -ceq $source.Id -and
+        $saved.model_catalog_json -ceq $catalogPath) 'The graphical request lost the catalog mode, source or saved manual path.'
     Start-UiOperation @{action='use';kind='api';selector=$live.Id} '应用合并后的账号配置'
     Wait-GuiOperation
     Assert-Gui ((Read-TextFile $ConfigPath) -match 'model_context_window = 8192' -and (Read-TextFile $ConfigPath) -match 'respect_system_proxy = false') 'The merged settings did not apply on switching.'
