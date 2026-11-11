@@ -1,5 +1,9 @@
 # 更新记录
 
+## 0.2.8
+
+- 修复固定启动入口在 Windows Script Host 下的 Unicode 解析，并增加实际启动隔离回归。
+
 ## 0.2.7
 
 - 修复 Windows PowerShell 5.1 将 `codex login status` 的正常 stderr 状态误判为切换失败的问题。

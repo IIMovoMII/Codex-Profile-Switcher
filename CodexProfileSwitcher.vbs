@@ -1,5 +1,5 @@
 Option Explicit
-Dim fs, shell, root, script, dataRoot, pointer, stream, command
+Dim fs, shell, root, script, dataRoot, pointer, stream, command, missingMessage
 Set fs = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 root = fs.GetParentFolderName(WScript.ScriptFullName)
@@ -18,7 +18,8 @@ If Not fs.FileExists(script) Then
 End If
 
 If Not fs.FileExists(script) Then
-    MsgBox "找不到切换器程序，请重新运行安装包。", vbExclamation, "Codex 账号切换"
+    missingMessage = ChrW(&H627E) & ChrW(&H4E0D) & ChrW(&H5230) & ChrW(&H5207) & ChrW(&H6362) & ChrW(&H5668) & ChrW(&H7A0B) & ChrW(&H5E8F) & ChrW(&HFF0C) & ChrW(&H8BF7) & ChrW(&H91CD) & ChrW(&H65B0) & ChrW(&H8FD0) & ChrW(&H884C) & ChrW(&H5B89) & ChrW(&H88C5) & ChrW(&H5305) & ChrW(&H3002)
+    MsgBox missingMessage, vbExclamation, "Codex " & ChrW(&H8D26) & ChrW(&H53F7) & ChrW(&H5207) & ChrW(&H6362)
     WScript.Quit 1
 End If
 

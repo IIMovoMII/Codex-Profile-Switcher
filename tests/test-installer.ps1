@@ -48,6 +48,34 @@ function Get-ComparableFileHash([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Test-FixedLauncher([string]$InstalledEntry,[string]$Root) {
+    $executionRoot = Join-Path $Root 'fixed launcher execution test'
+    $launcherDirectory = Join-Path $executionRoot 'launcher files'
+    $appDirectory = Join-Path $executionRoot 'installed app'
+    [void][IO.Directory]::CreateDirectory($launcherDirectory)
+    [void][IO.Directory]::CreateDirectory($appDirectory)
+    $entry = Join-Path $launcherDirectory 'CodexProfileSwitcher.vbs'
+    $pointer = Join-Path $launcherDirectory 'install-path.txt'
+    $stub = Join-Path $appDirectory 'start-gui.ps1'
+    $marker = Join-Path $executionRoot 'entry-started.txt'
+    Copy-Item -LiteralPath $InstalledEntry -Destination $entry
+    [IO.File]::WriteAllText($pointer,$appDirectory,(New-Object System.Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText($stub,"[IO.File]::WriteAllText(`$env:CODEX_SWITCHER_ENTRY_MARKER,'started')",(New-Object System.Text.UTF8Encoding($false)))
+    $previousMarker = [Environment]::GetEnvironmentVariable('CODEX_SWITCHER_ENTRY_MARKER','Process')
+    try {
+        [Environment]::SetEnvironmentVariable('CODEX_SWITCHER_ENTRY_MARKER',$marker,'Process')
+        $cscript = Join-Path $env:SystemRoot 'System32\cscript.exe'
+        $output = @(& $cscript //NoLogo $entry 2>&1)
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) { throw ('The fixed launcher returned code ' + $exitCode + ': ' + ($output -join ' ')) }
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (-not [IO.File]::Exists($marker) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        if (-not [IO.File]::Exists($marker) -or [IO.File]::ReadAllText($marker) -cne 'started') { throw 'The fixed launcher did not start the pointed-to app.' }
+    } finally {
+        [Environment]::SetEnvironmentVariable('CODEX_SWITCHER_ENTRY_MARKER',$previousMarker,'Process')
+    }
+}
+
 try {
     $installArguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=' + (Quote-WindowsArgument $installRoot) + ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot)
     $process = Start-Process -FilePath $setup -ArgumentList $installArguments -WindowStyle Hidden -Wait -PassThru
@@ -76,6 +104,7 @@ try {
     if (-not [IO.File]::Exists($launcherFile) -or -not [IO.File]::Exists($launcherPointer)) { throw 'The fixed launcher or its install-path pointer is missing.' }
     if ((Get-ComparableFileHash $launcherFile) -ne (Get-ComparableFileHash (Join-Path $script:ProjectRoot 'CodexProfileSwitcher.vbs'))) { throw 'The installed fixed launcher differs from the source.' }
     if ([IO.File]::ReadAllText($launcherPointer).Trim() -cne $installRoot) { throw 'The fixed launcher points to the wrong install directory.' }
+    Test-FixedLauncher $launcherFile $testRoot
     $installerSource = [IO.File]::ReadAllText((Join-Path $script:ProjectRoot 'installer\CodexProfileSwitcher.iss'))
     $desktopIconLine = @($installerSource -split '[\r\n]+' | Where-Object { $_.Contains('{autodesktop}') })[0]
     $desktopTaskPresent = $installerSource.Contains('Name: "desktopicon";')
