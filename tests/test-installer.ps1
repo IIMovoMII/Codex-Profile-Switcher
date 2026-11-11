@@ -34,6 +34,20 @@ function Quote-WindowsArgument([string]$Value) {
     return '"' + [regex]::Replace([regex]::Replace($Value,'(\\*)"$','$1$1\"'),'(\\+)$','$1$1') + '"'
 }
 
+function Get-ComparableFileHash([string]$Path) {
+    $extension = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($extension -in @('.ps1','.vbs','.cmd','.md','.iss','.xaml','.txt','.cs')) {
+        $text = [IO.File]::ReadAllText($Path)
+        $canonical = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+        $encoding = New-Object System.Text.UTF8Encoding($false)
+        $bytes = $encoding.GetBytes($canonical)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
 try {
     $installArguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=' + (Quote-WindowsArgument $installRoot) + ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot)
     $process = Start-Process -FilePath $setup -ArgumentList $installArguments -WindowStyle Hidden -Wait -PassThru
@@ -52,7 +66,7 @@ try {
         $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne [string]$entry.sha256) { throw "Installed runtime file failed its manifest hash: $($entry.path)" }
         $source = Join-Path $script:ProjectRoot ([string]$entry.path)
-        if ($actual -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()) {
+        if ((Get-ComparableFileHash $path) -ne (Get-ComparableFileHash $source)) {
             throw "Installer is stale relative to current source: $($entry.path)"
         }
     }
@@ -60,7 +74,7 @@ try {
     $launcherFile = Join-Path $launcherRoot 'CodexProfileSwitcher.vbs'
     $launcherPointer = Join-Path $launcherRoot 'install-path.txt'
     if (-not [IO.File]::Exists($launcherFile) -or -not [IO.File]::Exists($launcherPointer)) { throw 'The fixed launcher or its install-path pointer is missing.' }
-    if ((Get-FileHash -LiteralPath $launcherFile -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $script:ProjectRoot 'CodexProfileSwitcher.vbs') -Algorithm SHA256).Hash) { throw 'The installed fixed launcher differs from the source.' }
+    if ((Get-ComparableFileHash $launcherFile) -ne (Get-ComparableFileHash (Join-Path $script:ProjectRoot 'CodexProfileSwitcher.vbs'))) { throw 'The installed fixed launcher differs from the source.' }
     if ([IO.File]::ReadAllText($launcherPointer).Trim() -cne $installRoot) { throw 'The fixed launcher points to the wrong install directory.' }
     $installerSource = [IO.File]::ReadAllText((Join-Path $script:ProjectRoot 'installer\CodexProfileSwitcher.iss'))
     $desktopIconLine = @($installerSource -split '[\r\n]+' | Where-Object { $_.Contains('{autodesktop}') })[0]
