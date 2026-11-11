@@ -30,15 +30,42 @@ CloseApplications=no
 Uninstallable=yes
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："
+Name: "desktopicon"; Description: "在桌面创建固定切换器入口"; GroupDescription: "快捷方式："
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\CodexProfileSwitcher.vbs"; DestDir: "{code:GetLauncherDirectory}"; DestName: "CodexProfileSwitcher.vbs"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
-Name: "{autoprograms}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start.vbs"""; WorkingDir: "{app}"
-Name: "{autodesktop}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start.vbs"""; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; WorkingDir: "{code:GetLauncherDirectory}"
+Name: "{autodesktop}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; WorkingDir: "{code:GetLauncherDirectory}"; Tasks: desktopicon
 Name: "{autoprograms}\卸载 Codex 账号切换"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\start.vbs"""; Description: "启动 Codex 账号切换"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; Description: "启动 Codex 账号切换"; WorkingDir: "{code:GetLauncherDirectory}"; Flags: nowait postinstall skipifsilent unchecked
+
+[Code]
+function GetLauncherDirectory(Param: String): String;
+begin
+  Result := ExpandConstant('{param:SWITCHERLAUNCHERDIR|}');
+  if Result = '' then
+    Result := ExpandConstant('{localappdata}\CodexProfileSwitcher\Launcher');
+end;
+
+function GetLauncherFile(Param: String): String;
+begin
+  Result := AddBackslash(GetLauncherDirectory('')) + 'CodexProfileSwitcher.vbs';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  LauncherDirectory: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    LauncherDirectory := GetLauncherDirectory('');
+    ForceDirectories(LauncherDirectory);
+    if not SaveStringToFile(AddBackslash(LauncherDirectory) + 'install-path.txt', ExpandConstant('{app}'), False) then
+      RaiseException('无法保存切换器入口的安装路径。');
+  end;
+end;

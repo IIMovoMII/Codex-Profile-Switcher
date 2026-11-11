@@ -11,6 +11,23 @@ function Assert-ServiceThrows([scriptblock]$Operation,[string]$Message){$thrown=
 try{
     $fixture=& (Join-Path $PSScriptRoot 'test-gui-fixture.ps1') -Root $serviceTestRoot
     . (Join-Path $serviceTestSource 'codex-profile-switcher.ps1') -LibraryOnly -CodexHome $fixture.CodexHome -DataDir $fixture.DataDir -CodexExecutable $fixture.FakeCodex -UnsafeAllowRunningCodex
+    $originalResolver=(Get-Item Function:\Resolve-CodexCommand).ScriptBlock
+    try{
+        function Resolve-CodexCommand { return 'Test-CodexStatusWithErrorOutput' }
+        function Test-CodexStatusWithErrorOutput {
+            param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+            Write-Error 'API key configured - masked-test-value'
+            $global:LASTEXITCODE=0
+        }
+        Assert-Service (Test-CodexLoginStatus -ExpectedKind api) 'A successful login status written to stderr was treated as a failure.'
+        $wrongKindError=''
+        try { $null=Test-CodexLoginStatus -ExpectedKind official } catch { $wrongKindError=$_.Exception.Message }
+        Assert-Service ($wrongKindError -match '未确认预期' -and $wrongKindError -notmatch 'masked-test-value') 'A mismatched authentication status was accepted or leaked into the error.'
+        Assert-Service ($ErrorActionPreference -ceq 'Stop') 'Login status validation changed the caller error preference.'
+    }finally{
+        Set-Item Function:\Resolve-CodexCommand -Value $originalResolver
+        Remove-Item Function:\Test-CodexStatusWithErrorOutput -ErrorAction SilentlyContinue
+    }
     $sourceConfig=@'
 # keep my config
 model = "my-own-model" # chosen model

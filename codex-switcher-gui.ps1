@@ -166,7 +166,7 @@ function Render-Profiles {
         $model=if($profile.Model){$profile.Model}else{'保留当前模型'}
         $summary=if($profile.Kind -eq 'api'){'API 接口'}else{'官方 OAuth'}
         $summary+='   ·   '+$model+'   ·   '+$profile.Status
-        $items += [pscustomobject]@{Id=$profile.Id;Kind=$profile.Kind;Name=$profile.Name;Subtitle=$subtitle;Summary=$summary;Active=$profile.Active;Icon=$(if($profile.Kind -eq 'api'){'{ }'}else{'O'});ActiveVisibility=$(if($profile.Active){'Visible'}else{'Collapsed'});SwitchLabel=$(if($profile.Active){'重新应用'}else{'切换'});Source=$profile}
+        $items += [pscustomobject]@{Id=$profile.Id;Kind=$profile.Kind;Name=$profile.Name;Subtitle=$subtitle;Summary=$summary;Active=$profile.Active;Icon=$(if($profile.Kind -eq 'api'){'{ }'}else{'O'});ActiveVisibility=$(if($profile.Active){'Visible'}else{'Collapsed'});SwitchLabel=$(if($profile.Active){'重新应用'}else{'切换'});ModelActionVisibility=$(if($profile.Kind -eq 'api'){'Visible'}else{'Collapsed'});Source=$profile}
     }
     $script:UI.ProfileList.ItemsSource=$items
     $script:UI.EmptyPanel.Visibility=if($items.Count -eq 0){'Visible'}else{'Collapsed'}
@@ -235,14 +235,24 @@ function Start-UpdateWorker([string]$Mode,[string]$ResultPath,[string]$RequestPa
 }
 function Start-UpdateCheck {
     if($NoShow){return}
+    if($null -ne $script:UpdateTask){return}
     try{
         $updateDirectory=Join-Path $DataDir 'updates'
         [void][IO.Directory]::CreateDirectory($updateDirectory)
         $resultPath=Join-Path $updateDirectory ('check-'+[Guid]::NewGuid().ToString('N')+'.json')
         $script:UpdateTask=[pscustomobject]@{Mode='Check';ResultPath=$resultPath;RequestPath=$null;Started=[DateTime]::UtcNow}
+        $script:AvailableUpdate=$null
+        $script:UI.UpdateButton.Content='检查中…'
+        $script:UI.UpdateButton.IsEnabled=$false
+        $script:UI.UpdateButton.ToolTip='正在查询 GitHub 最新稳定版'
+        Set-UiStatus '正在检查 GitHub 稳定版更新…'
         Start-UpdateWorker 'Check' $resultPath $null
         $script:UpdateTimer.Start()
-    }catch{$script:UpdateTask=$null}
+    }catch{
+        $script:UpdateTask=$null;$script:UI.UpdateButton.Content='检查更新';$script:UI.UpdateButton.IsEnabled=$true
+        $script:UI.UpdateButton.Visibility='Visible';$script:UI.UpdateButton.ToolTip='检查 GitHub 上的稳定版更新'
+        Set-UiStatus ('无法启动更新检查：'+$_.Exception.Message) $true
+    }
 }
 function Start-UpdateDownload {
     if($null -eq $script:AvailableUpdate){return}
@@ -274,9 +284,12 @@ function Complete-UpdateTask {
     if(-not [IO.File]::Exists($task.ResultPath)){
         if(([DateTime]::UtcNow-$task.Started).TotalSeconds -gt 150){
             $script:UpdateTimer.Stop();$script:UpdateTask=$null
+            $script:UI.UpdateButton.Content='检查更新';$script:UI.UpdateButton.Visibility='Visible';$script:UI.UpdateButton.IsEnabled=$null -eq $script:Job
+            $script:UI.UpdateButton.ToolTip='检查 GitHub 上的稳定版更新'
             if($task.Mode -eq 'Download'){
-                $script:UI.UpdateButton.IsEnabled=$true
                 Show-UiError '更新下载超时，请稍后重试。'
+            }else{
+                Set-UiStatus '更新检查超时，请点击“检查更新”重试。' $true
             }
         }
         return
@@ -288,12 +301,28 @@ function Complete-UpdateTask {
         if($task.RequestPath -and [IO.File]::Exists($task.RequestPath)){[IO.File]::Delete($task.RequestPath)}
         $script:UpdateTask=$null
         if($task.Mode -eq 'Check'){
+            $script:UI.UpdateButton.Visibility='Visible'
+            $script:UI.UpdateButton.IsEnabled=$null -eq $script:Job
             if($result.state -eq 'update'){
                 $script:AvailableUpdate=$result
                 $script:UI.UpdateButton.Content='更新至 v'+$result.latest_version
                 $script:UI.UpdateButton.ToolTip='从 GitHub Releases 下载并安装经过 SHA-256 校验的更新'
-                $script:UI.UpdateButton.Visibility='Visible'
-                $script:UI.UpdateButton.IsEnabled=$null -eq $script:Job
+                Set-UiStatus ('发现新版本 v'+$result.latest_version+'。点击更新入口查看安装选项。')
+            }elseif($result.state -eq 'current'){
+                $script:AvailableUpdate=$null
+                $script:UI.UpdateButton.Content='检查更新'
+                $script:UI.UpdateButton.ToolTip='当前已是最新稳定版；点击可重新检查'
+                Set-UiStatus ('已是最新稳定版 v'+$script:AppVersion)
+            }elseif($result.state -eq 'unavailable'){
+                $script:AvailableUpdate=$null
+                $script:UI.UpdateButton.Content='检查更新'
+                $script:UI.UpdateButton.ToolTip='GitHub 当前没有可用的安装包；点击可重新检查'
+                Set-UiStatus '已检查 GitHub，但当前没有可用的稳定版安装包。'
+            }else{
+                $script:AvailableUpdate=$null
+                $script:UI.UpdateButton.Content='检查更新'
+                $script:UI.UpdateButton.ToolTip='更新检查失败；点击可重新检查'
+                Set-UiStatus ('更新检查失败：'+[string]$result.message) $true
             }
             return
         }
@@ -310,7 +339,12 @@ function Complete-UpdateTask {
         Start-Process -FilePath ([string]$result.path) | Out-Null
         $script:Window.Close()
     }catch{
-        if($task.Mode -eq 'Download'){
+        if($task.Mode -eq 'Check'){
+            $script:UpdateTask=$null;$script:AvailableUpdate=$null
+            $script:UI.UpdateButton.Content='检查更新';$script:UI.UpdateButton.Visibility='Visible';$script:UI.UpdateButton.IsEnabled=$null -eq $script:Job
+            $script:UI.UpdateButton.ToolTip='更新检查失败；点击可重新检查'
+            Set-UiStatus ('更新检查失败：'+$_.Exception.Message) $true
+        }else{
             $script:UI.UpdateButton.IsEnabled=$true
             Show-UiError $_
         }
@@ -520,7 +554,7 @@ $script:UI.UpdateButton.Add_Click({
         if($script:Job){Show-UiError '请等待当前切换操作完成后再安装更新。';return}
         Start-Process -FilePath $script:DownloadedInstaller | Out-Null
         $script:Window.Close()
-    }else{Start-UpdateDownload}
+    }elseif($script:AvailableUpdate){Start-UpdateDownload}else{Start-UpdateCheck}
 })
 $script:UI.NavAccounts.Add_Click({Select-UiPage 'Accounts'});$script:UI.NavEnvironment.Add_Click({Select-UiPage 'Environment'});$script:UI.NavLogs.Add_Click({Select-UiPage 'Logs'})
 $script:UI.RefreshButton.Add_Click({if($script:Job){return};Refresh-UiState;if($script:SelectedPage -eq 'Environment'){Render-Diagnostics}})
@@ -529,7 +563,7 @@ $script:UI.AddButton.Add_Click({Show-ProfileEditor $null});$script:UI.EmptyAddBu
 $script:UI.ImportButton.Add_Click({if([IO.File]::Exists($ConfigPath) -and [IO.File]::Exists($AuthPath)){Start-UiOperation @{action='initialize'} '导入当前账号'}else{Show-ProfileEditor $null}})
 $script:UI.ProfileList.AddHandler([Windows.Controls.Button]::ClickEvent,[Windows.RoutedEventHandler]{param($sender,$event)
     try{$button=$event.OriginalSource;while($button -and $button -isnot [Windows.Controls.Button]){$button=[Windows.Media.VisualTreeHelper]::GetParent($button)};if(-not $button){return};$item=$button.DataContext
-        if($button.Tag -eq 'switch'){Start-UiOperation @{action='use';kind=$item.Kind;selector=$item.Id} ('切换到 '+$item.Name)}elseif($button.Tag -eq 'menu'){Show-ProfileActions $button $item}
+        if($button.Tag -eq 'switch'){Start-UiOperation @{action='use';kind=$item.Kind;selector=$item.Id} ('切换到 '+$item.Name)}elseif($button.Tag -eq 'model'){Show-ProfileEditor $item.Source}elseif($button.Tag -eq 'menu'){Show-ProfileActions $button $item}
     }catch{Show-UiError $_}
 })
 $script:UI.CancelButton.Add_Click({

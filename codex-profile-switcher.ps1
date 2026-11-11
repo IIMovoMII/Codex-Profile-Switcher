@@ -1519,8 +1519,15 @@ function Test-CodexLoginStatus {
     $savedEnvironment = Save-CodexEnvironment
     try {
         Set-CleanCodexEnvironment
-        $statusOutput = @(& $executable login status 2>&1)
-        if ($LASTEXITCODE -ne 0) {
+        # Windows PowerShell 5.1 promotes native stderr records to terminating
+        # errors under Stop, even when codex login status succeeds. Keep that
+        # output captured so the exit code and authentication kind decide.
+        $statusOutput = @(& {
+            $ErrorActionPreference = 'Continue'
+            & $executable login status 2>&1
+        })
+        $statusExitCode = $LASTEXITCODE
+        if ($statusExitCode -ne 0) {
             throw "codex login status 执行失败；为避免泄露认证片段，已隐藏其输出。"
         }
 

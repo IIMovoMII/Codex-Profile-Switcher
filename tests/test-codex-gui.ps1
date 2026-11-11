@@ -36,9 +36,28 @@ try{
     $fixture=& (Join-Path $PSScriptRoot 'test-gui-fixture.ps1') -Root $testRoot
     . (Join-Path $testSource 'codex-switcher-gui.ps1') -NoShow -CodexHome $fixture.CodexHome -DataDir $fixture.DataDir -CodexExecutable $fixture.FakeCodex -MonitorDataDir (Join-Path $testRoot 'monitor') -UnsafeAllowRunningCodex
     Assert-Gui ($null -eq $script:Window.FindName('NavSettings') -and $null -eq $script:Window.FindName('SettingsPage')) 'The separate settings page was not removed.'
+    Assert-Gui ($script:UI.UpdateButton.Visibility -eq 'Visible' -and $script:UI.UpdateButton.Content -ceq '检查更新') 'The update entry is not visible by default.'
     Write-AtomicText $script:SettingsPath '{"version":1,"official_proxy":"system","api_proxy":"direct","context_window":"8192"}'
     Refresh-UiState
     Assert-Gui (@($script:UI.ProfileList.ItemsSource).Count -eq 3) 'The account list did not load.'
+    $apiProfileCard=@($script:UI.ProfileList.ItemsSource | Where-Object Kind -eq 'api')[0]
+    $officialProfileCard=@($script:UI.ProfileList.ItemsSource | Where-Object Kind -eq 'official')[0]
+    Assert-Gui ($apiProfileCard.ModelActionVisibility -eq 'Visible' -and $officialProfileCard.ModelActionVisibility -eq 'Collapsed') 'The API model settings entry is missing or shown for official accounts.'
+    $currentUpdateResult=Join-Path $testRoot 'update-current.json'
+    Write-AtomicText $currentUpdateResult (ConvertTo-Json -InputObject ([ordered]@{state='current';current_version=$script:AppVersion}) -Compress)
+    $script:UpdateTask=[pscustomobject]@{Mode='Check';ResultPath=$currentUpdateResult;RequestPath=$null;Started=[DateTime]::UtcNow}
+    Complete-UpdateTask
+    Assert-Gui ($script:UI.UpdateButton.Visibility -eq 'Visible' -and $script:UI.UpdateButton.IsEnabled -and $script:UI.UpdateButton.Content -ceq '检查更新' -and $script:UI.StatusText.Text -match '最新稳定版') 'A completed update check hid the manual update entry or failed to report its result.'
+    $errorUpdateResult=Join-Path $testRoot 'update-error.json'
+    Write-AtomicText $errorUpdateResult '{"state":"error","message":"isolated offline test"}'
+    $script:UpdateTask=[pscustomobject]@{Mode='Check';ResultPath=$errorUpdateResult;RequestPath=$null;Started=[DateTime]::UtcNow}
+    Complete-UpdateTask
+    Assert-Gui ($script:UI.UpdateButton.Visibility -eq 'Visible' -and $script:UI.UpdateButton.IsEnabled -and $script:UI.StatusText.Text -match 'isolated offline test') 'An update-check failure was hidden or left the manual entry disabled.'
+    $malformedUpdateResult=Join-Path $testRoot 'update-malformed.json'
+    Write-AtomicText $malformedUpdateResult '{invalid'
+    $script:UpdateTask=[pscustomobject]@{Mode='Check';ResultPath=$malformedUpdateResult;RequestPath=$null;Started=[DateTime]::UtcNow}
+    Complete-UpdateTask
+    Assert-Gui ($null -eq $script:UpdateTask -and $script:UI.UpdateButton.Visibility -eq 'Visible' -and $script:UI.UpdateButton.IsEnabled -and $script:UI.StatusText.Text -match '更新检查失败') 'An invalid update response prevented a retry.'
     $script:UI.HomePath.Text='%USERPROFILE%\.codex';$script:UI.HomePath.ToolTip='%USERPROFILE%\.codex'
     Export-Gui 'accounts'
     $script:UI.FilterApi.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))

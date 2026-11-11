@@ -20,6 +20,7 @@ $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempRoot ('CodexSwitcherInstallTest-' + [Guid]::NewGuid().ToString('N'))
 if (-not $testRoot.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) { throw 'Test directory escapes the system temporary directory.' }
 $installRoot = Join-Path $testRoot 'installed'
+$launcherRoot = Join-Path $testRoot 'fixed-launcher'
 $codexHome = Join-Path $testRoot 'codex-home'
 $store = Join-Path $testRoot 'switcher-store'
 $uninstaller = Join-Path $installRoot 'unins000.exe'
@@ -34,7 +35,7 @@ function Quote-WindowsArgument([string]$Value) {
 }
 
 try {
-    $installArguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=' + (Quote-WindowsArgument $installRoot)
+    $installArguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=' + (Quote-WindowsArgument $installRoot) + ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot)
     $process = Start-Process -FilePath $setup -ArgumentList $installArguments -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)." }
     $process.Dispose()
@@ -55,6 +56,23 @@ try {
             throw "Installer is stale relative to current source: $($entry.path)"
         }
     }
+
+    $launcherFile = Join-Path $launcherRoot 'CodexProfileSwitcher.vbs'
+    $launcherPointer = Join-Path $launcherRoot 'install-path.txt'
+    if (-not [IO.File]::Exists($launcherFile) -or -not [IO.File]::Exists($launcherPointer)) { throw 'The fixed launcher or its install-path pointer is missing.' }
+    if ((Get-FileHash -LiteralPath $launcherFile -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $script:ProjectRoot 'CodexProfileSwitcher.vbs') -Algorithm SHA256).Hash) { throw 'The installed fixed launcher differs from the source.' }
+    if ([IO.File]::ReadAllText($launcherPointer).Trim() -cne $installRoot) { throw 'The fixed launcher points to the wrong install directory.' }
+    $installerSource = [IO.File]::ReadAllText((Join-Path $script:ProjectRoot 'installer\CodexProfileSwitcher.iss'))
+    $desktopIconLine = @($installerSource -split '[\r\n]+' | Where-Object { $_.Contains('{autodesktop}') })[0]
+    $desktopTaskPresent = $installerSource.Contains('Name: "desktopicon";')
+    $desktopTargetPresent = $desktopIconLine -and $desktopIconLine.Contains('{code:GetLauncherFile}') -and $desktopIconLine.Contains('Tasks: desktopicon')
+    if (-not $desktopTaskPresent -or -not $desktopTargetPresent) { throw ('The optional desktop shortcut does not target the fixed launcher. Task=' + $desktopTaskPresent + '; line=' + [string]$desktopIconLine) }
+    [IO.File]::AppendAllText($launcherFile, "`r`n' immutable-launcher-test-marker")
+    $process = Start-Process -FilePath $setup -ArgumentList $installArguments -WindowStyle Hidden -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Installer update exited with code $($process.ExitCode)." }
+    $process.Dispose()
+    if ([IO.File]::ReadAllText($launcherFile) -notmatch 'immutable-launcher-test-marker') { throw 'An installer update overwrote the fixed launcher.' }
+    if ([IO.File]::ReadAllText($launcherPointer).Trim() -cne $installRoot) { throw 'An installer update failed to refresh the launcher path pointer.' }
 
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $gui = Join-Path $installRoot 'start-gui.ps1'

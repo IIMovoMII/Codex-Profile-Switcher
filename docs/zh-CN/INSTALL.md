@@ -1,10 +1,10 @@
 # 图形版使用说明
 
-当前版本：0.2.6-preview，支持 Windows 10/11 64 位。
+当前版本：0.2.7，支持 Windows 10/11 64 位。
 
 ## 下载和安装
 
-从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载最新的 **Codex-Profile-Switcher-Setup-版本.exe**。安装器默认安装到当前用户的 **%LOCALAPPDATA%\\Programs\\CodexProfileSwitcher**，不要求管理员权限。可选创建桌面快捷方式，也会创建开始菜单入口。
+从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载最新的 **Codex-Profile-Switcher-Setup-版本.exe**。安装器默认安装到当前用户的 **%LOCALAPPDATA%\\Programs\\CodexProfileSwitcher**，不要求管理员权限。可选在桌面创建指向固定入口的快捷方式，也会创建开始菜单入口。固定入口保存在 **%LOCALAPPDATA%\\CodexProfileSwitcher\\Launcher**，后续更新不会覆盖入口文件。
 
 安装不会登录账号、改 Codex 配置或启动 Desktop。卸载程序只移除切换器文件和快捷方式，保留账号档案、聊天、项目和备份。
 
@@ -20,7 +20,7 @@
 
 ## 管理账号
 
-账号卡片用于切换连接。右侧菜单可编辑名称与配置、重新登录官方账号或移除本地档案。
+账号卡片用于切换连接。API 账号卡片上的“模型设置”可直接打开模型、目录及其他账号配置；右侧菜单可编辑完整配置、重新登录官方账号或移除本地档案。
 
 模型、上下文窗口和系统代理在添加账号或“编辑名称与配置”中按账号设置。保存后在下次切换或“重新应用”时生效。留空模型或上下文会保留 Codex 当前值。编辑当前 API 的地址或 Key 后，需要重新应用才会更新当前连接。
 
@@ -53,7 +53,7 @@
 
 ## 更新
 
-每次打开图形界面时，切换器会在隐藏后台请求 GitHub 最新稳定版信息，最长等待 8 秒，不阻塞窗口。只有检测到更新时才显示更新按钮。网络不可用、超时或 GitHub 没有稳定版时，账号功能仍可使用。
+每次打开图形界面时，切换器会在隐藏后台请求 GitHub 最新稳定版信息，最长等待 8 秒，不阻塞窗口。右上角“检查更新”始终可见，也可随时手动重试；检查失败或当前已是最新版本时，界面会显示简短状态。账号功能不受更新检查结果影响。
 
 点击更新后，切换器先询问，再从该项目的 GitHub Release 下载安装包和 SHA-256 文件。校验通过后启动 Inno Setup 安装程序。安装器保留现有 **%LOCALAPPDATA%\\CodexProfileSwitcher** 与 **CODEX_HOME**。切换器不静默下载或安装更新。
 
@@ -68,7 +68,7 @@
 - 当前生效的 auth.json 仍由 Codex 本身按文件认证机制维护。
 - 排查问题时只上传必要日志，并先删除邮箱、用户路径、账号 ID、令牌、API 地址、聊天内容和项目名称。
 
-## 预览版边界
+## 验证边界
 
 自动化隔离测试使用临时目录、模拟 CLI 和测试 OAuth 数据。它们不能替代真实账号登录、真实 API 请求或跨机器验证。本项目依赖 Codex Desktop 的本地数据结构；客户端重大升级后，应等待兼容版本，不要手动恢复未知旧备份。
 
