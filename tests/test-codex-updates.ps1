@@ -59,14 +59,36 @@ $mockFile = Join-Path ([IO.Path]::GetTempPath()) ('codex-update-hash-test-' + [G
 [IO.File]::WriteAllBytes($mockFile,$mockPayload)
 $script:MockInstallerHash = (Get-FileHash -LiteralPath $mockFile -Algorithm SHA256).Hash.ToLowerInvariant()
 Remove-Item -LiteralPath $mockFile -Force
+function Invoke-RestMethod { throw 'simulated anonymous API rate limit' }
+$script:MockLatestPageUri = [Uri]'https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.2.8'
+$script:MockUpdateAssetsAvailable = $true
 function Invoke-WebRequest {
-    param([string]$Uri,[string]$OutFile,[switch]$UseBasicParsing,[int]$TimeoutSec)
+    param([string]$Uri,[string]$OutFile,[string]$Method='Get',[switch]$UseBasicParsing,[int]$TimeoutSec)
+    if ($Uri -eq 'https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/latest') {
+        return [pscustomobject]@{BaseResponse=[pscustomobject]@{ResponseUri=$script:MockLatestPageUri}}
+    }
+    if ($Method -eq 'Head') {
+        return [pscustomobject]@{StatusCode=$(if($script:MockUpdateAssetsAvailable){200}else{404})}
+    }
     if ($Uri.EndsWith('.sha256')) {
         [IO.File]::WriteAllText($OutFile,($script:MockInstallerHash + ' installer.exe' + [Environment]::NewLine))
     } else {
         [IO.File]::WriteAllBytes($OutFile,$mockPayload)
     }
 }
+$fallbackUpdate = Invoke-GitHubReleaseCheck '0.2.7'
+Assert-Equal $fallbackUpdate.state 'update' 'stable page fallback after API rate limit'
+Assert-Equal $fallbackUpdate.latest_version '0.2.8' 'fallback stable tag parsing'
+Assert-Equal $fallbackUpdate.asset_name 'Codex-Profile-Switcher-Setup-0.2.8.exe' 'fallback installer selection'
+$script:MockUpdateAssetsAvailable = $false
+$missingFallbackAssets = Invoke-GitHubReleaseCheck '0.2.7'
+Assert-Equal $missingFallbackAssets.state 'unavailable' 'fallback requires both release assets'
+$script:MockUpdateAssetsAvailable = $true
+$script:MockLatestPageUri = [Uri]'https://example.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.2.8'
+$rejected = $false
+try { $null = Invoke-GitHubReleaseCheck '0.2.7' } catch { $rejected = $true }
+if (-not $rejected) { throw 'An untrusted latest release page host must be rejected.' }
+$script:MockLatestPageUri = [Uri]'https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.2.8'
 $downloadRequestPath = Join-Path ([IO.Path]::GetTempPath()) ('codex-update-download-test-' + [Guid]::NewGuid().ToString('N') + '.json')
 $downloadRequest = [ordered]@{
     latest_version='0.2.6'

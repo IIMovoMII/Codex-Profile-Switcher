@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $script:ReleaseApi = 'https://api.github.com/repos/IIMovoMII/Codex-Profile-Switcher/releases/latest'
+$script:LatestReleasePage = 'https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/latest'
 $script:SetupNamePrefix = 'Codex-Profile-Switcher-Setup-'
 
 function Assert-GitHubAssetUri([string]$Value) {
@@ -68,6 +69,53 @@ function Get-ReleaseUpdateStatus($Release, [string]$InstalledVersion) {
     }
 }
 
+function Test-GitHubReleaseAsset([string]$Value) {
+    $uri = Assert-GitHubAssetUri $Value
+    try {
+        $response = Invoke-WebRequest -Uri $uri.AbsoluteUri -Method Head -UseBasicParsing -TimeoutSec 8
+        return [int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 300
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-GitHubStablePageCheck([string]$InstalledVersion) {
+    $response = Invoke-WebRequest -Uri $script:LatestReleasePage -Method Get -UseBasicParsing -TimeoutSec 8
+    $finalUri = $null
+    if ($response.BaseResponse) {
+        if ($response.BaseResponse.PSObject.Properties['ResponseUri']) {
+            $finalUri = $response.BaseResponse.ResponseUri
+        } elseif ($response.BaseResponse.PSObject.Properties['RequestMessage']) {
+            $finalUri = $response.BaseResponse.RequestMessage.RequestUri
+        }
+    }
+    if ($null -eq $finalUri -or $finalUri.Scheme -ne 'https' -or $finalUri.Host -ne 'github.com' -or
+        $finalUri.AbsolutePath -notmatch '^/IIMovoMII/Codex-Profile-Switcher/releases/tag/v(?<version>\d+\.\d+\.\d+)$') {
+        throw 'GitHub 最新稳定版页面没有指向有效的项目版本标签。'
+    }
+
+    $latestVersion = $Matches.version
+    $setupName = $script:SetupNamePrefix + $latestVersion + '.exe'
+    $releaseBase = 'https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/download/v' + $latestVersion + '/'
+    $setupUrl = $releaseBase + $setupName
+    $checksumUrl = $setupUrl + '.sha256'
+    $release = [pscustomobject]@{
+        tag_name = 'v' + $latestVersion
+        prerelease = $false
+        draft = $false
+        assets = @(
+            [pscustomobject]@{name=$setupName;browser_download_url=$setupUrl}
+            [pscustomobject]@{name=($setupName+'.sha256');browser_download_url=$checksumUrl}
+        )
+    }
+    $status = Get-ReleaseUpdateStatus $release $InstalledVersion
+    if ($status.state -eq 'update' -and
+        (-not (Test-GitHubReleaseAsset $setupUrl) -or -not (Test-GitHubReleaseAsset $checksumUrl))) {
+        return [pscustomobject]@{state='unavailable';current_version=$InstalledVersion;latest_version=$latestVersion}
+    }
+    return $status
+}
+
 function Write-UpdateResult([string]$Path, $Value) {
     if (-not $Path) { throw '缺少更新结果文件路径。' }
     $parent = Split-Path -Parent $Path
@@ -84,8 +132,17 @@ function Invoke-GitHubReleaseCheck([string]$InstalledVersion) {
         'User-Agent' = 'Codex-Profile-Switcher'
         'X-GitHub-Api-Version' = '2022-11-28'
     }
-    $release = Invoke-RestMethod -Uri $script:ReleaseApi -Method Get -Headers $headers -TimeoutSec 8
-    return Get-ReleaseUpdateStatus $release $InstalledVersion
+    try {
+        $release = Invoke-RestMethod -Uri $script:ReleaseApi -Method Get -Headers $headers -TimeoutSec 8
+        return Get-ReleaseUpdateStatus $release $InstalledVersion
+    } catch {
+        $apiError = $_.Exception.Message
+        try {
+            return Invoke-GitHubStablePageCheck $InstalledVersion
+        } catch {
+            throw ('GitHub 更新查询失败（API：'+$apiError+'；稳定版页面：'+$_.Exception.Message+'）。')
+        }
+    }
 }
 
 function Invoke-VerifiedUpdateDownload([string]$Path) {
