@@ -1,6 +1,6 @@
 # C# / .NET 10 实施与验证计划
 
-## 当前任务：0.3.12 仓库清理与安全修复
+## 当前任务：0.3.12 仓库清理与安全修复（已完成）
 
 - 基线为 `9b48383`，开始时工作区干净。保留已有业务、数据格式、固定入口及全部有效功能，不改写 Git 历史。
 - 已将 35 个旧 PowerShell 实现/旧对照材料、闲置 XAML、两张过时截图及旧 Python 启动器测试移出源码树；本机归档逐文件校验，未提交归档。历史实现仍可通过旧标签查阅。
@@ -10,7 +10,10 @@
 - 入口测试发现 CMD 在括号内提前展开 ERRORLEVEL，会把失败报告为成功；已改为分支标签，关闭延迟展开，保留参数、单次按键等待和退出码。真实 CMD 的 9 个 EXE 探针用例及 WSH 中文路径/参数/编码用例通过。
 - 最终构建 0 警告/错误；97 项 xUnit（Core 6、Infrastructure 78、Desktop 11、CLI 2）通过，实际原生 SQLite 为 3.53.3。真实 WSH/CMD 在 PowerShell 7 与 Windows PowerShell 5.1 测试宿主下均通过；重定向标准输入显式去除 BOM，避免 BOM 被误当作 PAUSE 的按键。
 - 本地自包含安装器 `dist/0.3.12-release/Codex-Profile-Switcher-Setup-0.3.12.exe`，45,929,529 字节，SHA-256 `2d7804862f4c987ad753044e24545bf22470eac7e380aaede1089c9a0203e0ef`。发布目录 `artifacts/publish/v0.3.12-release`；隔离安装、副本 WPF/CLI 无外部运行时启动、旧入口备份迁移、用户修改保护及卸载数据留存均通过。282 项发布清单、14 项静态文件与源码逐项一致，无 PowerShell 载荷。
-- 待完成：GitHub 源码和 Release、全新 CI 无安全告警确认、清理已修复的旧失败运行记录。证据位于忽略的 `artifacts/release-0.3.12`，运行数据和归档不提交。
+- [0.3.12 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.12) 已公开，源码提交/标签目标 `31b00368f3f0dbc92ea57866c61f41779619771b`，源码树与带注释标签逐项核验。GitHub 公告与内置文件一致；两项公开附件大小和 SHA-256 与已验证本地包一致，CI 未覆盖它们。
+- [CI 43257811664](https://github.com/IIMovoMII/Codex-Profile-Switcher/actions/runs/43257811664) 在全新 Windows runner 中全部成功：依赖审计、97 项测试、真实 WSH/CMD、打包和隔离安装；完整日志无 NU190x、Node 20 或 warning 注释，检查 annotations 为空。
+- 经当前 C# 更新服务从系统代理实际检查并回下载公开安装包，6.12 秒从 API 403 回退成功，本地 0.3.11 能检测 0.3.12；公告、下载 SHA-256 和单独回下载的校验附件均匹配。源码 PS 文件仅剩 6 个、内容约减少 94%；GitHub 当前树无旧业务/旧界面目录，语言统计缓存刷新可能延迟。
+- 已保存旧日志并删除一条已修复的旧失败运行 `43212525974`；当前成功 CI 和所有有效测试保留。证据位于忽略的 `artifacts/release-0.3.12`，运行数据和归档不提交。
 
 ## 架构与功能映射
 
