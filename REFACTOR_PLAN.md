@@ -1,12 +1,15 @@
 # C# / .NET 10 重构计划
 
-## 0.3.11 GitHub 发布与公告同步（进行中）
+## 0.3.11 GitHub 发布与公告同步（已完成）
 
-- 用户已授权提交、推送源码和安装包到 GitHub；保留全部现有修改，准备发布 0.3.11 稳定版，使已装本地 0.3.10 的用户也可检测到更新；不执行真实安装或账号操作。
+- 用户已授权并完成 GitHub 源码和安装包发布；完整保留此前 0.3.8–0.3.10 有效功能，稳定版 0.3.11 使已装本地 0.3.10 的用户也可检测到更新；未执行真实安装或账号操作。
 - 发布公告以 `docs/zh-CN/releases/0.3.11.md` 为唯一正文，嵌入应用供离线显示，并直接用作 GitHub Release body；在线检查显示同版本的 Release 公告，限流回退时读取相应标签的公告文件，公告不可用不阻断更新检查。
 - 同步 README、安装说明、贡献说明与变更记录，补充公告行为测试；重新构建、完整回归、隔离安装验证后提交发布。安装包和 SHA-256 作为 Release 附件，不提交运行数据、归档和构建输出。
 - 本地最终验证：构建 0 警告/错误，96 项 xUnit（Core 6、Infrastructure 77、Desktop 11、CLI 2）全部通过。实际 WPF 已打开内置 0.3.11 公告，README 示例为合成账号。282 项发布清单和 14 项静态文件与源码一致；真实 WSH、隔离安装副本 GUI/CLI、已知旧入口备份迁移、修改入口保护和卸载留存通过。
-- 最终候选包 `dist/0.3.11-release/Codex-Profile-Switcher-Setup-0.3.11.exe`，45,875,523 字节；SHA-256 `7f89e571d7ea83fc88aa0585432da644c1beae31972753df797e0342670308f6`。发布目录 `artifacts/publish/v0.3.11-release`；公开前先提交并推送源码及标签，在草稿 Release 上传包和清单、核验后公开。证据位于 `artifacts/release-0.3.11`，均不提交。
+- 公开安装器 `dist/0.3.11-release/Codex-Profile-Switcher-Setup-0.3.11.exe`，45,875,523 字节；SHA-256 `7f89e571d7ea83fc88aa0585432da644c1beae31972753df797e0342670308f6`。发布目录 `artifacts/publish/v0.3.11-release`；先提交源码和标签，再核验草稿附件后公开。证据位于 `artifacts/release-0.3.11`，不提交运行或测试材料。
+- [v0.3.11 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.11) 的源码与标签目标为 `1f7fa413a3c5101e6eb2cd02153d1ffb473e29f9`。Git HTTPS 连接重置后采用 Git Data API，源码树、提交和带注释标签 SHA 与本地完全相同，无强推。60 项提交变更的敏感模式和禁止数据路径扫描通过。
+- 公开公告与内置 Markdown 完全一致；系统代理下 3.73 秒完成 API 403 后网页回退，确认本地 0.3.10 可发现 0.3.11。通过相同 C# 更新服务实际回下载完整公开安装器并验证 SHA-256；公开校验附件也单独下载并逐字节匹配。
+- [GitHub Actions 43250035003](https://github.com/IIMovoMII/Codex-Profile-Switcher/actions/runs/43250035003) 全部成功：构建、96 项测试、WSH、公告一致、打包和隔离安装。CI 未覆盖已上传附件，结束后再次核对公告及两项资产 digest 不变。干净 CI 仍报告既有 SQLitePCLRaw.lib.e_sqlite3 2.1.11 的 NU1903 / GHSA-2m69-gcr7-jv3q 告警，未抑制或声称已修复；Node 20 Action 的迁移提示不影响此次结果。
 
 ## 0.3.10 安装包体积优化（本地交付）
 
