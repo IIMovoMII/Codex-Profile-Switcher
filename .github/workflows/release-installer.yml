@@ -3,6 +3,7 @@ name: Build Windows installer
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,19 +12,19 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout tagged source
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || github.ref }}
 
       - name: Validate release version
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          $version = $env:RELEASE_TAG.TrimStart('v')
-          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release tag: $env:RELEASE_TAG" }
-          if ((Get-Content -Raw version.txt).Trim() -ne $version) { throw "Release tag and version.txt differ." }
+          $version = (Get-Content -Raw version.txt).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version.txt: $version" }
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG.TrimStart('v') -ne $version) { throw "Release tag and version.txt differ." }
 
       - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@v4
@@ -55,6 +56,7 @@ jobs:
           .\tests\test-installer.ps1 -SetupPath ".\dist\Codex-Profile-Switcher-Setup-$version.exe"
 
       - name: Attach installer and checksum
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name }}

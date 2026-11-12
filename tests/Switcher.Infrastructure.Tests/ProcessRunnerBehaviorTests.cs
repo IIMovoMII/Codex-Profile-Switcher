@@ -1,3 +1,4 @@
+using System.Text;
 using Switcher.Core.Abstractions;
 using Switcher.Infrastructure.Processes;
 
@@ -64,11 +65,15 @@ public sealed class ProcessRunnerBehaviorTests
             var runner = new SystemProcessRunner();
             var environment = new Dictionary<string, string?> { ["CODEX_HOME"] = root };
             var captured = await runner.RunAsync(
-                new ProcessRequest(cmd, ["/d", "/c", "echo %CODEX_HOME%"], root, environment), CancellationToken.None);
+                new ProcessRequest(cmd, ["/d", "/u", "/c", "echo %CODEX_HOME%>codex-home.txt"], root, environment), CancellationToken.None);
             var interactive = await runner.RunAsync(
                 new ProcessRequest(cmd, ["/d", "/c", "exit /b 0"], root, environment, Interactive: true), CancellationToken.None);
 
-            Assert.Equal(root, captured.StandardOutput.Trim());
+            // cmd's default output code page cannot represent Chinese on English Windows.
+            // /u redirects its built-in command output as UTF-16 on every Windows locale.
+            Assert.Equal(0, captured.ExitCode);
+            var childHome = await File.ReadAllTextAsync(Path.Combine(root, "codex-home.txt"), Encoding.Unicode);
+            Assert.Equal(root, childHome.Trim());
             Assert.Equal(0, interactive.ExitCode);
             Assert.Empty(interactive.StandardOutput);
             Assert.Empty(interactive.StandardError);
