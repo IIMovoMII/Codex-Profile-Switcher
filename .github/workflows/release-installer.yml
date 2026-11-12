@@ -13,9 +13,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
         with:
           ref: ${{ github.event.release.tag_name || github.ref }}
+          persist-credentials: false
 
       - name: Validate release version
         shell: pwsh
@@ -32,14 +33,20 @@ jobs:
           if ($env:RELEASE_TAG -and $env:RELEASE_BODY.Replace("`r`n", "`n").Trim() -cne $notes) { throw 'GitHub Release body differs from the bundled release notes.' }
 
       - name: Set up .NET 10 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0, Node 24
         with:
           dotnet-version: '10.0.x'
+
+      - name: Restore and audit dependencies
+        shell: pwsh
+        run: |
+          dotnet restore .\CodexProfileSwitcher.sln --force-evaluate
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency restore or vulnerability audit failed.' }
 
       - name: Build and test
         shell: pwsh
         run: |
-          dotnet build .\CodexProfileSwitcher.sln
+          dotnet build .\CodexProfileSwitcher.sln --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Solution build failed.' }
           dotnet test .\CodexProfileSwitcher.sln --no-build
           if ($LASTEXITCODE -ne 0) { throw 'Solution tests failed.' }
@@ -62,7 +69,7 @@ jobs:
 
       - name: Attach installer and checksum
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4, Node 24
         with:
           tag_name: ${{ github.event.release.tag_name }}
           overwrite_files: false

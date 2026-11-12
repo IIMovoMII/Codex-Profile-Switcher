@@ -1,102 +1,52 @@
-# C# / .NET 10 重构计划
+# C# / .NET 10 实施与验证计划
 
-## 0.3.11 GitHub 发布与公告同步（已完成）
+## 当前任务：0.3.12 仓库清理与安全修复
 
-- 用户已授权并完成 GitHub 源码和安装包发布；完整保留此前 0.3.8–0.3.10 有效功能，稳定版 0.3.11 使已装本地 0.3.10 的用户也可检测到更新；未执行真实安装或账号操作。
-- 发布公告以 `docs/zh-CN/releases/0.3.11.md` 为唯一正文，嵌入应用供离线显示，并直接用作 GitHub Release body；在线检查显示同版本的 Release 公告，限流回退时读取相应标签的公告文件，公告不可用不阻断更新检查。
-- 同步 README、安装说明、贡献说明与变更记录，补充公告行为测试；重新构建、完整回归、隔离安装验证后提交发布。安装包和 SHA-256 作为 Release 附件，不提交运行数据、归档和构建输出。
-- 本地最终验证：构建 0 警告/错误，96 项 xUnit（Core 6、Infrastructure 77、Desktop 11、CLI 2）全部通过。实际 WPF 已打开内置 0.3.11 公告，README 示例为合成账号。282 项发布清单和 14 项静态文件与源码一致；真实 WSH、隔离安装副本 GUI/CLI、已知旧入口备份迁移、修改入口保护和卸载留存通过。
-- 公开安装器 `dist/0.3.11-release/Codex-Profile-Switcher-Setup-0.3.11.exe`，45,875,523 字节；SHA-256 `7f89e571d7ea83fc88aa0585432da644c1beae31972753df797e0342670308f6`。发布目录 `artifacts/publish/v0.3.11-release`；先提交源码和标签，再核验草稿附件后公开。证据位于 `artifacts/release-0.3.11`，不提交运行或测试材料。
-- [v0.3.11 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.11) 的源码与标签目标为 `1f7fa413a3c5101e6eb2cd02153d1ffb473e29f9`。Git HTTPS 连接重置后采用 Git Data API，源码树、提交和带注释标签 SHA 与本地完全相同，无强推。60 项提交变更的敏感模式和禁止数据路径扫描通过。
-- 公开公告与内置 Markdown 完全一致；系统代理下 3.73 秒完成 API 403 后网页回退，确认本地 0.3.10 可发现 0.3.11。通过相同 C# 更新服务实际回下载完整公开安装器并验证 SHA-256；公开校验附件也单独下载并逐字节匹配。
-- [GitHub Actions 43250035003](https://github.com/IIMovoMII/Codex-Profile-Switcher/actions/runs/43250035003) 全部成功：构建、96 项测试、WSH、公告一致、打包和隔离安装。CI 未覆盖已上传附件，结束后再次核对公告及两项资产 digest 不变。干净 CI 仍报告既有 SQLitePCLRaw.lib.e_sqlite3 2.1.11 的 NU1903 / GHSA-2m69-gcr7-jv3q 告警，未抑制或声称已修复；Node 20 Action 的迁移提示不影响此次结果。
+- 基线为 `9b48383`，开始时工作区干净。保留已有业务、数据格式、固定入口及全部有效功能，不改写 Git 历史。
+- 已将 35 个旧 PowerShell 实现/旧对照材料、闲置 XAML、两张过时截图及旧 Python 启动器测试移出源码树；本机归档逐文件校验，未提交归档。历史实现仍可通过旧标签查阅。
+- 当前 PowerShell 只用于构建、发布白名单、隔离预览、入口及安装验证。保留的 C# 测试没有删除；旧启动器测试的有效检查接入当前 EXE 测试。
+- 更新 Microsoft.Data.Sqlite 10.0.15，解析到 SQLitePCLRaw 2.1.13；直接与传递依赖审计未发现已知漏洞。NU1901–NU1904 作为构建错误，新增实际加载原生 SQLite >= 3.50.2 的回归，覆盖 GHSA-2m69-gcr7-jv3q。
+- 三个 CI Action 升级到 Node 24，并固定已核验版本的完整提交 SHA；保留构建、行为回归、WSH/CMD、公告一致、打包和隔离安装步骤。
+- 入口测试发现 CMD 在括号内提前展开 ERRORLEVEL，会把失败报告为成功；已改为分支标签，关闭延迟展开，保留参数、单次按键等待和退出码。真实 CMD 的 9 个 EXE 探针用例及 WSH 中文路径/参数/编码用例通过。
+- 最终构建 0 警告/错误；97 项 xUnit（Core 6、Infrastructure 78、Desktop 11、CLI 2）通过，实际原生 SQLite 为 3.53.3。真实 WSH/CMD 在 PowerShell 7 与 Windows PowerShell 5.1 测试宿主下均通过；重定向标准输入显式去除 BOM，避免 BOM 被误当作 PAUSE 的按键。
+- 本地自包含安装器 `dist/0.3.12-release/Codex-Profile-Switcher-Setup-0.3.12.exe`，45,929,529 字节，SHA-256 `2d7804862f4c987ad753044e24545bf22470eac7e380aaede1089c9a0203e0ef`。发布目录 `artifacts/publish/v0.3.12-release`；隔离安装、副本 WPF/CLI 无外部运行时启动、旧入口备份迁移、用户修改保护及卸载数据留存均通过。282 项发布清单、14 项静态文件与源码逐项一致，无 PowerShell 载荷。
+- 待完成：GitHub 源码和 Release、全新 CI 无安全告警确认、清理已修复的旧失败运行记录。证据位于忽略的 `artifacts/release-0.3.12`，运行数据和归档不提交。
 
-## 0.3.10 安装包体积优化（本地交付）
+## 架构与功能映射
 
-- 基线：保留全部 0.3.8/0.3.9 未提交功能；0.3.9 正式安装器 47,658,658 字节，发布文件 149,598,492 字节。主要体积来自自包含的 .NET/WPF 运行时。
-- 采用 SDK 支持的语言资源筛选及 Inno Setup 更高压缩率；默认继续携带运行时，不启用 WPF 不支持的裁剪或 NativeAOT，不手工删除框架程序集。
-- 顺序：确认发布和压缩选项 → 构建并比较真实大小 → 隔离安装验证 WPF/CLI、固定入口、升级及卸载保留 → 更新说明和交付 SHA-256。
-- 验证只用临时 CODEX_HOME、数据目录与模拟 CLI；不切换真实账号、不安装到真实目录、不自动推送或发布。
-- 已完成：GUI/CLI 发布统一使用 `SatelliteResourceLanguages=zh-Hans`，仅减少 144 个其他语言附加资源，保留内置英文、简体中文及所有框架程序集。安装器采用 `lzma2/ultra64` solid 和独立压缩进程。
-- 实测：安装器由 47,658,658 降至 45,821,991 字节（45.45 → 43.70 MiB，减少 3.85%）；发布文件由 149,598,492 降至 141,497,291 字节，减少 8,101,201 字节。另测 128 MiB 字典和 273 fast bytes，仅多省 216,212 字节；最终采用 64 MiB 字典，避免为微小收益增加安装解压内存和打包成本。比较产物位于 `artifacts/size-0.3.10`，不进入发布白名单。
-- 验证：两项 `dotnet publish` 编译及 Inno 构建无警告/错误；280 项发布清单、12 项静态文件与源码一致。增强安装测试验证完整运行时、WPF/SQLite 和简体中文资源；子进程显式把 DOTNET_ROOT/X64 指向不存在的隔离目录，已安装副本的 GUI/CLI 仍正常启动。真实 WSH 入口/中文路径/参数/退出码、0.2.9/0.3.6 旧入口备份迁移、用户修改保护、重复安装、独立卸载登记及卸载保留均通过。本轮未修改 C# 业务逻辑，没有重复运行上轮 86 项业务回归。
-- 最终包 `dist/0.3.10/Codex-Profile-Switcher-Setup-0.3.10.exe`，SHA-256 `05747107ece723903150a2b5815a7c9e3cc2bceb257d2a2dd3e524d806f72479`；发布目录 `artifacts/publish/v0.3.10`，固定发布指针已更新。文档和版本已同步；未提交、推送、发布 Release、真实安装或真实账号/跨机器试用。
-
-## 0.3.9 更新连接、存储与目录定位
-
-- 保留当前未提交的 0.3.8 界面及有效功能；本轮不提交、推送或操作真实账号/安装。
-- 已定位：系统代理出口的 GitHub API 返回 403、`X-RateLimit-Remaining: 0`；同一代理的官方 Release 网页返回 200，直连 API 返回 200。修复为限时 API 检查、识别限流并回退官方 Release 网页，保留来源限制与 SHA-256 验证，显示具体失败原因。
-- 存储：无历史修改时不创建备份；已完成备份按数量/大小清理，待恢复、未知格式和用户手动目录保留。更新缓存限量，过期未完成下载自动清理；GUI/CLI 共用策略。
-- 目录：默认账号目录和现有 CODEX_HOME 自动解析，参考档案绑定路径及已记住的位置；不可用时才提供手动选择。不移动数据、不改变 DPAPI 的路径绑定、不把显式隔离路径回退到真实环境。
-- 实现：`GitHubUpdateService` 增加独立请求/总体时限、403/429 分类、官方 Release 页面与资产链接解析；仍用系统代理，不接收 GitHub Token。`DataLocationResolver` 为 GUI/CLI 共用目录入口，保留显式路径优先与 DPAPI 原路径绑定；新增失效目录恢复窗口和记忆位置。`StorageMaintenanceService` 按完成状态、来源与文件清单识别可清理材料，保护事务、跨备份引用、外部路径、链接与手动文件；无变更历史扫描不生成空备份。
-- 已验证：86 项 xUnit（Core 4、Infrastructure 70、Desktop 10、CLI 2）；实际系统代理的 API 403 限流后 3.6 秒回退成功。真实 WSH 中文路径/固定入口/参数/退出码通过。WPF 合成预览实际点击数据位置、更新检查、运行中目录失效、恢复窗口、重新识别和保存位置；已核对记忆文件只含版本与两个路径。启动阶段失效恢复窗也实际显示。
-- 原生文件夹选择器已实际打开、导航和取消；自动化工具对嵌套原生窗口的元素索引/焦点返回不稳定，未把最终“选择文件夹”提交当作成功。路径选择后的校验、匹配及记忆由隔离行为测试覆盖。仅停止本轮合成预览进程，临时移动的合成目录已恢复；没有真实用户数据写入/清理。
-- 最终同源码自包含 x64 包 `dist/0.3.9-final/Codex-Profile-Switcher-Setup-0.3.9.exe`，SHA-256 `1de6bb6e8472029e65d4a3f22b958615ad465242775d17e89174491fa9fe1a6d`。隔离安装验证 SHA-256、424 项发布清单、12 项静态白名单、安装副本 WPF/CLI、已知旧入口备份迁移、修改入口保护、独立卸载登记及卸载留存。发布输出 `artifacts/publish/v0.3.9-final`，固定入口的发布指针已更新。自动安全审查以 `blocked by policy` 拒绝删除本轮两个中间构建目录，未提供更具体原因；保留 `dist/0.3.9` 与 `artifacts/publish/v0.3.9`，它们不作为最终交付；未尝试绕过审查。
-- 当前实现/测试/文档/本地安装包均已落实，无待实现核心 TODO。本轮没有提交、推送、发布 Release 或安装到真实环境；未执行真实账号及跨机器试用。验证材料位于 `artifacts/storage-0.3.9`，界面边界如上。
-
-## 0.3.8 界面重构（本地交付）
-
-- 基线：`33c8535`，工作区干净；按用户提供的五张设计图实现青绿色玻璃质感、Windows 窗口控制、左侧导航、横向账号卡片及右侧账号抽屉。
-- 页面映射：账号管理 → 搜索/筛选、添加菜单、行内切换/模型设置/管理菜单；账号抽屉 → 基本信息、模型与目录、网络和上下文；诊断 → 环境、聊天兼容、项目与桌面工具；操作记录 → 持久日志；设置 → 更新、默认策略、数据位置、关于。
-- 继续调用现有 C# 核心；账号保存与应用分开；模型来源不联网探测；历史准备按钮明确写入语义；示例图中的账号、进程和更新状态均绑定实际数据。
-- 步骤：共用样式与图标 → 页面/抽屉 ViewModel → 真实功能接线 → 隔离回归与真实 WPF 点击 → 文档、0.3.8 安装包及隔离安装验证。
-- 验证边界：仅临时 CODEX_HOME、临时数据、合成档案和模拟 CLI；不执行真实切换、OAuth、真实安装或自动发布。
-- 实现：`Themes/Light.xaml` 与 `Controls/SymbolIcon` 统一配色、圆角控件和矢量图标；`Views` 包含账号、诊断、记录、设置和右侧账号编辑面板。`ProfileEditorViewModel` 管理草稿及本地模型选择；`MainViewModel` 调用现有 Core，后台工作和进度更新分离。API 名称、连接和策略一次保存，保存前校验档案未被外部更改。
-- 新增兼容能力：按实际认证而非注册表最后选中指针显示当前账号；默认策略与自动检查更新偏好只编辑自有设置字段并保留未知内容；模型列表只读投影不会改写手动文件。旧 VBS/CMD 和业务数据格式保持兼容。
-- 构建与回归：`dotnet build` 成功；最终 `dotnet test` 58/58（Core 4、Infrastructure 43、Desktop 9、CLI 2），WSH 固定入口测试通过。新增测试覆盖搜索筛选、当前身份、编辑/取消、并发拒绝覆盖、手动目录保护、目录读取/非法结构、默认设置未知字段和更新失败重试/两次确认。
-- 实际 GUI：临时 CODEX_HOME、合成官方/API 档案与模拟 CLI；已点击账号模型设置、指定模型并保存、添加 API 菜单、取消编辑、环境检查、取消进行中的检查、默认策略保存、更新/记录导航。最后一次发布副本截图复验收到物理 Esc 停止信号，已停止后续电脑自动操作；没有真实账号操作或真实 OAuth/API 请求。
-- 安装验证：最终自包含 x64 包 `dist/0.3.8-ui/Codex-Profile-Switcher-Setup-0.3.8.exe`，SHA-256 `2c082e85f63de08822f6587dfc3bdbbe271c753e0e8ba511cda2c52ac878bf20`。`test-installer.ps1` 验证 SHA-256、424 项发布清单、安装副本 WPF 启动/关闭、CLI、旧 0.2.9/0.3.6 固定入口备份迁移、修改过的入口保护、卸载及数据留存。测试使用独立临时目录和独立 `CPS-Test-…` 卸载登记；正式安装标识不变。
-- 最终发布目录 `artifacts/publish/v0.3.8-ui`；12 个白名单静态文件与源码一致，发布指针已更新到该目录。本地截图/测试日志/TRX 位于 `artifacts/ui-0.3.8`；均不分发、不提交。本轮未提交、推送或发布 Release；0.3.7 仍为公开稳定版。
-
-## 基线与约束
-
-- 本文件所在的仓库目录为唯一项目根目录；开始时基线为 `d60a4c8`，未提交工作区干净。本轮变更保留在原工作区，没有 reset、clean 或覆盖旧发布包。
-- 已按要求读取维护说明、状态、README、安装说明和贡献指南。账号与备份仍使用 `%LOCALAPPDATA%\CodexProfileSwitcher`；聊天与项目沿用用户现有 `CODEX_HOME`。
-- 全部行为测试使用临时目录、合成凭据与数据库；没有执行真实账号切换、OAuth、API 调用或真实用户安装。
-- 使用本机临时 .NET 10 SDK 与 Inno Setup 6。发布目标为 Windows x64、自包含运行时，不启用 trimming 或 NativeAOT。
-
-## 功能对照
-
-| 功能范围 | 新实现 | 验证证据 |
+| 现有功能 | 当前实现 | 保护目标与验证 |
 | --- | --- | --- |
-| 首次初始化、当前账号导入、多官方/API 档案、增删改名、重新授权及凭据加密 | `Switcher.Core/Profiles`、`Switcher.Infrastructure/Profiles` | 合成认证、身份核验、未知 registry 字段、删除防复活、实时 OAuth token 保存、取消恢复与 CLI 导入/删除测试 |
-| 同类/跨类切换、重新应用、失败恢复、写前检查和操作日志 | `Switcher.Core/Switching`、`Switcher.Infrastructure/Switching` | 双向与同类档案行为、写后验证回滚、并发变化拒绝覆盖、持久化恢复记录测试 |
-| 模型、上下文、代理的继承/保留/显式策略及局部 TOML 编辑 | Core `Configuration`、Infrastructure `TomlConfigEditor` | 注释、未知字段、官方移除 API 覆盖、个人偏好保留与策略测试 |
-| 官方原生目录、按账号校验并隔离的快照、API 手动文件 | `Switcher.Infrastructure/Models/ModelCatalogService` | 完整未知字段、来源隔离、手动文件保护、坏缓存保留旧快照、事务恢复错误测试；WPF 显示真实路径与维护方式 |
-| 共享聊天/项目、账号私有 renderer 状态、SQLite 项目投影 | `CodexAdapters`、`History/ProjectProjectionService` | 双官方账号状态隔离、共享项目与未知偏好；SQLite/WAL 备份、归属投影、并发保护测试 |
-| 历史 JSONL 增量、数据库兼容、取消和进程中断恢复 | `Switcher.Infrastructure/History/HistoryCompatibilityService` | JSONL 与 SQLite 备份、重复准备、部分写入回滚、重启恢复及外部修改拒绝覆盖测试 |
-| 环境检查、互斥锁、子进程、更新重试/下载/校验 | `Processes`、`Updates`、Desktop 环境页 | stderr/退出码、超时、取消、独立环境、更新暂时错误、恶意 URL、SHA-256 和下载变更测试 |
-| 公共 CLI、参数兼容、固定入口 | `Switcher.Cli`、根目录 VBS/CMD | CLI 状态、档案操作、合成 API Key stdin 隐藏、JSON、退出码和临时 CODEX_HOME；安装测试核验固定入口 |
-| 中文 WPF、进度、取消、账号/模型/环境/更新页 | `Switcher.Desktop` | ViewModel 单测与本轮隔离真实窗口交互验收 |
-| 自包含 x64 安装、桌面入口选项、旧入口迁移和卸载 | `installer`、`build-installer.ps1`、`distribution-files.ps1` | SHA-256 清单、精确分发清单、隔离安装/重复安装/旧入口迁移/用户修改保护/卸载留存测试 |
+| 初始化、导入当前身份、多官方/API 账号、增删编辑、重新授权与身份核验 | Core/Profiles、Infrastructure/Profiles | 合成认证、DPAPI 旧熵参数、未知 registry 字段、删除防复活、最新凭据、取消恢复、CLI |
+| 完整切换、重新应用、进度、取消、互斥和持久日志 | Core/Switching、Infrastructure/Switching | 同类/跨类档案、计划校验、写前并发检查、写后验证、分阶段恢复和外部修改保护 |
+| 模型、上下文和代理策略、个人偏好 | Core/Configuration、Infrastructure/Configuration | 继承/保留/显式设置、TOML 语法与注释、未知字段、配置及偏好保留 |
+| 手动目录、指定官方账号快照、真实路径与时间 | Infrastructure/Models、Desktop/ProfileEditorViewModel | 官方缓存只读、完整 models 字段、来源隔离、无效缓存留旧快照、手动文件保护 |
+| 共享聊天、增量历史、SQLite/WAL、项目投影 | Infrastructure/History、CodexAdapters | JSONL 字节保留、偏移和数据库投影、无变更不建备份、提交后失败与重启恢复 |
+| 账号私有桌面状态与共享项目、个人设置 | CodexAdapters/DesktopStateAdapter | JSON 形状与未知字段、私有/共享状态边界、恢复材料、配置并发保护 |
+| 子进程、超时、取消与环境检查 | Infrastructure/Processes | stdout/stderr 分开、成功 stderr、失败退出码、超时/取消、特殊字符、子进程独立环境 |
+| GitHub 更新与同源公告 | Infrastructure/Updates、Core/Updates | API 限流网页回退、来源限制、超时重试、SHA-256、确认下载/安装、版本 Markdown 嵌入与 Release 一致 |
+| 自动定位与限量保留 | DataLocationResolver、StorageMaintenanceService | 临时路径注入、失效后手动恢复、DPAPI 原路径绑定、恢复依赖与未知/手动材料保护 |
+| 中文 WPF 页面、账号抽屉与 CLI | Switcher.Desktop、Switcher.Cli | 合成档案的编辑/保存/取消、模型设置、进度、诊断、记录、更新与策略，双方共用业务核心 |
+| 固定入口、自包含安装、旧版迁移与卸载 | 根目录 VBS/CMD、Inno Setup、构建白名单 | 真实 WSH/CMD、中文编码/路径、已知入口先备份迁移、未知修改保护、安装清单哈希、独立登记和卸载数据留存 |
 
-## 实施决定
+## 关键决定
 
-- GUI 与 CLI 共用 Core 服务；外部文件、进程、DPAPI、SQLite、Codex 格式及更新能力通过 Infrastructure 接口组合。
-- 档案注册表、凭据封套、模型目录和备份沿用兼容结构。切换器只编辑拥有的配置字段；未知 JSON 字段保留。
-- 多文件写入采用读取状态、计划校验、持久化恢复材料、执行、验证和提交。历史事务与认证/配置事务分开，外部改动时保留恢复材料。
-- 安装器只从精确静态白名单和 dotnet publish 结果组包。识别旧固定启动器后先备份再升级；未知自定义内容保留并提示。后续更新使用固定入口路径指针。
-- 0.3.6 安装器按 SHA-256 清理已知 0.2.9 发布的 11 个 PowerShell 文件；被改动或不在白名单中的文件保留并提示，目录扫描跳过 reparse point。
-- 旧 PowerShell 实现、SQLite helper、`CodexPortableHistory.cs` 和对应的 21 个旧回归脚本已收在 `tests/legacy-powershell`；默认入口和发布白名单不引用这些材料。
+- 模块化单体：Core 管规则与流程，Infrastructure 管外部能力，WPF/CLI 共用核心。正常运行不调用 PowerShell，也不以旧脚本兜底。
+- 沿用档案注册表、DPAPI CurrentUser/原 CODEX_HOME 熵参数、账号 ID、模型快照和备份格式。只修改操作拥有的字段，保留用户设置、未知 JSON 和 TOML 注释。
+- 多文件流程为读取、计划、验证、持久化恢复、执行、验证、提交；历史准备与认证/配置是独立事务。取消写入后先安全收尾，遇外部变化保留恢复材料并拒绝覆盖。
+- 官方模型缓存只读；身份来源确认后才写账号独立快照。同步失败不影响切换，不覆盖手动目录；快速入口沿用跳过历史和模型处理的约定。
+- 运行数据、账号、聊天、日志、恢复材料及归档不得提交或打包；QQ 助手保持独立，只使用已有维护标记协调。
+- 安装器只使用 distribution-files.ps1 精确白名单和独立 dotnet publish 输出。Windows x64 携带完整 .NET 10/WPF 运行时，不启用裁剪或 NativeAOT。
+- 公告唯一正文是 docs/zh-CN/releases/<版本>.md：构建嵌入、安装分发、GitHub Release 和应用内展示使用同一文件。保留旧版公告供对应版本的更新回退读取。
 
-## 阶段状态
+## 已完成的界面与安装验证基线
 
-1. [x] 建立 .NET 10 solution、Core、Infrastructure、WPF、CLI 与 xUnit 工程。
-2. [x] 迁入账号、凭据、配置策略、TOML 编辑和实时凭据保存。
-3. [x] 迁入完整切换计划、互斥锁、原子文件操作、恢复日志、取消收尾与并发保护。
-4. [x] 迁入模型目录、聊天历史、SQLite/WAL、项目投影和账号私有 Desktop 状态。
-5. [x] 实现共用业务核心的 CLI、中文 WPF 管理界面、进度/取消和 GitHub 更新流程。
-6. [x] 完成兼容入口、自包含安装器、文档、隔离 UI 与安装验收。
+- 0.3.8–0.3.11 的 WPF 已用临时 CODEX_HOME、合成账号和模拟 CLI 实际点击验证：账号模型设置/保存/取消、添加 API、环境检查与取消、默认策略、目录失效恢复、更新和内置公告。源码截图仅含合成账号。
+- 0.3.11 通过 96 项 xUnit、真实 WSH 和隔离安装；282 项清单与 14 项静态文件和源码一致。自包含 GUI/CLI 在不存在的外部 DOTNET_ROOT 下启动；已知旧入口备份迁移、用户修改保护、重复安装及卸载留存通过。
+- [0.3.11 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.11) 源码标签为 `1f7fa413a3c5101e6eb2cd02153d1ffb473e29f9`；[CI 43250035003](https://github.com/IIMovoMII/Codex-Profile-Switcher/actions/runs/43250035003) 成功，遗留 NU1903 和 Node 20 提示由本次修复处理。
+- 历次完整阶段记录可在 Git 历史查阅；本文件保持当前实现映射、关键决定和实际验证状态。
 
 ## 验证边界
 
-- 0.3.7 修复已授权的真实桌面固定入口：先保留原始字节备份，再更新为 EXE 启动器，桌面 LNK 未改动。使用临时数据和不存在的 Codex 可执行路径，通过该 LNK 的实际目标/参数启动并看到 `v0.3.7` WPF；没有真实账号切换。
-- 0.3.7 中文安装向导实测“选择目标位置”和桌面入口任务页，随后取消退出；另在中文临时路径进行完整安装测试，覆盖 0.2.9 和 0.3.6 启动器备份迁移、用户改动保护和卸载保留。真实 WSH 测试覆盖 UTF-8/UTF-16 中文路径、源码发布指针、三个入口和退出码。`dotnet build/test` 继续通过 0 警告/错误和 51 项测试。
-- GitHub 发布包为 `dist/0.3.7-release/Codex-Profile-Switcher-Setup-0.3.7.exe`，SHA-256 `2c2512ae1da05e0a2befb0d37def56b6e608b79ef48e4977a2f8e95d1876db52`。发布输出 `artifacts/publish/v0.3.7-release`，424 项清单通过安装校验，12 个静态白名单文件与最终说明一致。本地较早构建保留，以下 0.3.6 记录为上一轮验收证据。
-- `dotnet build CodexProfileSwitcher.sln` 通过，0 警告、0 错误；`dotnet test CodexProfileSwitcher.sln --no-build` 通过 51 项：Core 4、CLI 2、Desktop 3、Infrastructure 42。
-- WPF 隔离安装副本已真实启动并点击：添加 API、保存合成档案、查看实际模型目录/说明、打开编辑窗后取消、运行环境检查并确认完成状态。启动检查更新已关闭，Codex 可执行路径指向不存在的临时文件。
-- 隔离安装集成测试通过：423 项发布清单逐文件校验、无 PowerShell 文件、安装、旧入口迁移和备份、重复安装保留用户修改、卸载保留模拟数据。
-- `tests/test-legacy-installer-upgrade.ps1` 验证旧 `0.2.9` 到 `0.3.6`：11 个已知未改动脚本均清理；附加模拟用户改动时保留该文件并写出告警。两种情形均成功卸载并清理临时目录。
-- 最终本地包：`dist/0.3.6-final-source/Codex-Profile-Switcher-Setup-0.3.6.exe`，SHA-256 `a2ff3a93b4fb96e3651d99cd039e0031cfef9b2b82319d7fb35dc62031311002`；自包含发布输出在 `artifacts/publish/v0.3.6-final-source`。423 项清单均通过安装包内哈希校验，11 个静态白名单文件与源码一致，清单无 PowerShell 文件。
-- WPF 实际交互验收针对本次重构的界面及业务代码完成；0.3.6 重建改变程序集版本标记和安装迁移逻辑，界面源码没有变化。0.3.6 安装器集成测试另行验证最终包安装、CLI 启动、固定入口、升级保留和卸载。
-- `src` 生产代码扫描未发现 PowerShell 运行时调用；`git diff --check` 无空白错误。没有执行真实账号切换、OAuth、Codex/中转 API 请求、真实用户目录安装、桌面快捷方式写入或跨机器验证；没有提交、推送或发布 Release。`0.3.6` 尚未发布到 GitHub。
+- 开发、测试、安装只使用临时 CODEX_HOME、临时数据目录、合成 JSON/JSONL/SQLite 与模拟 CLI；不执行真实账号切换、OAuth、Codex/中转 API 或真实安装。
+- 0.3.7 曾按用户明确授权备份并修复真实桌面固定启动入口；没有更换 LNK 路径，也没有操作真实账号。其余安装验证使用隔离路径与独立 CPS-Test 登记。
+- 隔离测试、真实账号试用和跨机器验证分开记录；后两项未自动执行。0.3.12 不修改页面布局，沿用上述交互基线并验证新依赖和最终安装副本启动。

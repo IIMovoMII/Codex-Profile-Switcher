@@ -16,7 +16,7 @@
 
 从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载 `Codex-Profile-Switcher-Setup-版本.exe`。安装器面向当前 Windows 用户，不要求管理员权限。安装时可选择创建桌面快捷方式；桌面和开始菜单快捷方式都使用固定启动入口。
 
-当前稳定版为 **[0.3.11](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.11)**，采用青绿色 WPF 界面，改进 GitHub 限流回退、目录自动定位和备份保留，并精简安装包。完整内容见 [0.3.11 更新公告](docs/zh-CN/releases/0.3.11.md)，应用内使用相同公告。0.2.x 是旧版 PowerShell 程序。
+当前稳定版为 **[0.3.12](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.12)**，修复 SQLite 依赖安全告警并清理旧实现，保留青绿色 WPF 界面、模型目录、聊天共享和全部现有功能。完整内容见 [0.3.12 更新公告](docs/zh-CN/releases/0.3.12.md)，应用内使用相同公告。0.2.x 是旧版 PowerShell 程序。
 
 安装和卸载向导使用简体中文，安装包自带 .NET 10 运行时。日常运行不需要 .NET SDK、PowerShell、Python、Node.js 或额外 SQLite 安装。
 
@@ -67,7 +67,7 @@
 
 ## 开发
 
-项目使用 C#、.NET 10、WPF、CommunityToolkit.Mvvm、System.Text.Json、Microsoft.Data.Sqlite、Windows DPAPI、xUnit 和 Inno Setup 6。正常运行的业务逻辑全部由 C# 实现；PowerShell 只用于构建/安装编排，以及 `tests/legacy-powershell` 中的历史行为对照。
+项目使用 C#、.NET 10、WPF、CommunityToolkit.Mvvm、System.Text.Json、Microsoft.Data.Sqlite、Windows DPAPI、xUnit 和 Inno Setup 6。正常运行的业务逻辑全部由 C# 实现；保留的 PowerShell 脚本仅用于构建、隔离预览、入口及安装验证。旧业务脚本、旧界面和过时测试已退出当前源码树，历史实现可从旧版本标签查阅。
 
 ```powershell
 dotnet build .\CodexProfileSwitcher.sln
@@ -77,4 +77,4 @@ dotnet test .\CodexProfileSwitcher.sln
 
 构建安装包需要 .NET 10 SDK 和 Inno Setup 6。安装器采用自包含 Windows x64 发布，不启用 trimming 或 NativeAOT。功能映射、关键决定和隔离验证状态见 [REFACTOR_PLAN.md](REFACTOR_PLAN.md)；贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-当前源码版本为 **0.3.11**。隔离测试不等于真实账号登录、真实 API 使用或跨机器验证。项目采用 [MIT License](LICENSE.txt)。
+当前源码版本为 **0.3.12**。隔离测试不等于真实账号登录、真实 API 使用或跨机器验证。项目采用 [MIT License](LICENSE.txt)。

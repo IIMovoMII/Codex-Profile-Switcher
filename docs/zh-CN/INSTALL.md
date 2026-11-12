@@ -1,8 +1,8 @@
 # 图形版使用说明
 
-当前源码及安装包版本：0.3.11，面向 Windows 10/11 x64。
+当前源码及安装包版本：0.3.12，面向 Windows 10/11 x64。
 
-本版采用 C# / .NET 10 WPF 与青绿色卡片界面，下载 [0.3.11 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.11)。[本版公告](releases/0.3.11.md)与应用内一致。0.2.x 安装包是旧版 PowerShell 程序。
+本版采用 C# / .NET 10 WPF 与青绿色卡片界面，下载 [0.3.12 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.12)。[本版公告](releases/0.3.12.md)与应用内一致，本次包含 SQLite 依赖安全修复。0.2.x 安装包是旧版 PowerShell 程序。
 
 ## 安装和固定入口
 

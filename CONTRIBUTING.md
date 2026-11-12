@@ -8,10 +8,11 @@
 - WPF 界面位于 `src/Switcher.Desktop`，CLI 位于 `src/Switcher.Cli`。两者调用同一业务核心。
 - WPF 共用配色、控件模板和矢量图标分别位于 `Themes`、`Controls`，四个主页面与账号抽屉位于 `Views`。账号草稿由 `ProfileEditorViewModel` 管理，保存前验证原档案未被其他窗口修改；页面不得直接写入认证、配置或数据库。
 - 正常运行时不得调用 PowerShell、加载旧 `.ps1` 或把业务逻辑放进 CMD/VBS。构建、安装编排与迁移对照测试可使用 PowerShell。
-- 旧 PowerShell 实现和历史对照测试位于 `tests/legacy-powershell`，只用于维护者检查旧行为，不进入运行链或安装包。
+- 旧 PowerShell 实现、旧界面及旧对照测试已移出当前源码树。需要查阅时使用旧版本标签；不要把旧业务脚本重新放回生产运行链。
 - 使用 .NET 10 SDK 在 Windows 上运行 `dotnet build .\CodexProfileSwitcher.sln` 和 `dotnet test .\CodexProfileSwitcher.sln`。涉及安装器时再运行 `build-installer.ps1` 和隔离安装测试。
 - 测试必须使用临时 `CODEX_HOME`、临时数据目录、合成账号/JSON/JSONL/SQLite 和模拟 CLI。不得执行真实账号切换、OAuth 登录或 API 请求。
 - 运行改动相关测试即可；不得以编译成功代替对关键行为的断言。实际界面变更需在隔离目录中启动 WPF 并完成交互检查。
+- 保持直接与传递 NuGet 依赖审计启用，NU1901–NU1904 作为构建错误处理；不要通过忽略告警或删除有效测试来掩盖漏洞。原生 SQLite 的最低安全版本由加载实际引擎的回归测试验证。
 - 可在构建后运行 `tests/start-frontend-preview.ps1 -DotNetPath <SDK的dotnet.exe>`：它在临时目录生成合成账号、模型目录与模拟 CLI，禁用启动更新检查，并显式传递临时 CODEX_HOME/数据位置。测试产物仅在 `artifacts`，不可把预览凭据或个人路径加入文档截图。
 
 ## 兼容和安全
