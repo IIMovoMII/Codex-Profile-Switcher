@@ -6,7 +6,7 @@
 #define OutputDir GetEnv("CODEX_SWITCHER_OUTPUT")
 
 [Setup]
-AppId={#AppId}
+AppId={code:GetApplicationId}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
@@ -21,14 +21,16 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={#OutputDir}
 OutputBaseFilename=Codex-Profile-Switcher-Setup-{#AppVersion}
-Compression=lzma2
+Compression=lzma2/ultra64
 SolidCompression=yes
+LZMAUseSeparateProcess=yes
 WizardStyle=modern
 UninstallDisplayName=Codex 账号切换
 SetupLogging=yes
 CloseApplications=no
 Uninstallable=yes
 ShowLanguageDialog=no
+UsePreviousLanguage=no
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
@@ -52,6 +54,24 @@ Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; Descrip
 const
   LegacyLauncherSha256 = 'c76301c7fa887265fbc97dd3fca0dbf5efa6c15d95ecb6583d6b25c297b09413';
   PreviousDotNetLauncherSha256 = '5c3d1fdf6ad3c61eb348cd5af6747f43e8f13a6e604b2575d060e9b315cb8339';
+
+function GetApplicationId(Param: String): String;
+var
+  TestId: String;
+  Index: Integer;
+begin
+  TestId := ExpandConstant('{param:SWITCHERTESTID|}');
+  if TestId = '' then begin
+    Result := ExpandConstant('{#AppId}');
+    Exit;
+  end;
+  if Length(TestId) <> 32 then
+    RaiseException('Invalid isolated installation identifier.');
+  for Index := 1 to Length(TestId) do
+    if Pos(TestId[Index], '0123456789abcdef') = 0 then
+      RaiseException('Invalid isolated installation identifier.');
+  Result := 'CPS-Test-' + TestId;
+end;
 
 function GetLauncherDirectory(Param: String): String;
 begin

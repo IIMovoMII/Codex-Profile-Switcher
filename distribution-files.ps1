@@ -11,7 +11,9 @@ $script:DistributionFiles = @(
     'CHANGELOG.md',
     'LICENSE.txt',
     'THIRD-PARTY-NOTICES.txt',
-    'docs\zh-CN\INSTALL.md'
+    'docs\zh-CN\INSTALL.md',
+    'docs\images\accounts.jpg',
+    ('docs\zh-CN\releases\' + ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'version.txt')).Trim()) + '.md')
 )
 
 function Get-PublishedDistributionFiles {

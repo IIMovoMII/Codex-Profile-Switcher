@@ -1,317 +1,253 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Microsoft.Win32;
 using Switcher.Core.Configuration;
-using Switcher.Core.Paths;
 using Switcher.Core.Profiles;
 using Switcher.Core.Switching;
 using Switcher.Core.Updates;
+using Switcher.Desktop.ViewModels;
 using Switcher.Infrastructure;
+using Switcher.Infrastructure.Configuration;
+using Switcher.Infrastructure.Switching;
+using Switcher.Infrastructure.Storage;
 
 namespace Switcher.Desktop;
 
 public sealed partial class MainViewModel : ObservableObject
 {
     private readonly ApplicationHost _host;
-    private UpdateInfo? _lastUpdate;
+    private readonly DesktopPreferencesStore _preferences;
+    private readonly IUpdateService _updates;
+    private DesktopPreferences? _savedPreferences;
     private CancellationTokenSource? _operationCancellation;
-    private bool _busy;
+    private UpdateInfo? _lastUpdate;
+    private string? _downloadedInstaller;
+    private readonly List<ProfileRowViewModel> _allProfiles = [];
 
-    public MainViewModel(ApplicationHost host)
+    public MainViewModel(ApplicationHost host, IUpdateService? updates = null)
     {
-        _host = host;
-        Profiles = [];
-        Refresh();
-        try { LogText = string.Join(Environment.NewLine, _host.OperationHistory.ReadRecent()); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.DecoderFallbackException) { LogText = "本地操作记录无法读取。"; }
-        if (!string.Equals(Environment.GetEnvironmentVariable("CODEX_SWITCHER_DISABLE_UPDATE_CHECK"), "1", StringComparison.Ordinal))
-            _ = CheckUpdatesAsync();
+        _host = host; _preferences = new(host.Paths); _updates = updates ?? host.Updates;
+        Refresh(); ReadRecords(); LoadPreferences();
     }
 
-    public ObservableCollection<ProfileRowViewModel> Profiles { get; }
-    [ObservableProperty] private ProfileRowViewModel? selectedProfile;
-    [ObservableProperty] private string currentMode = "未设置";
-    [ObservableProperty] private string dataLocation = "";
-    [ObservableProperty] private string environmentSummary = "尚未检查。";
-    [ObservableProperty] private string operationStatus = "";
-    [ObservableProperty] private string updateStatus = "启动时正在检查 GitHub 更新……";
+    public string Version => "v" + (typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.3.9");
+    public string CodexHome => _host.Paths.CodexHome;
+    public string DataDirectory => _host.Paths.DataDirectory;
+    public string ManualCatalogFile => _host.Paths.DefaultManualModelCatalogFile;
+    public string SnapshotsDirectory => _host.Paths.ModelCatalogDirectory;
+    public string BackupsDirectory => _host.Paths.HistoryBackupsDirectory;
+    public string DataDirectoryOrigin => _host.Paths.DataDirectoryOrigin;
+    public string CodexHomeOrigin => _host.Paths.CodexHomeOrigin;
+    public string StoragePolicy => StorageMaintenanceService.PolicyDescription;
+    public Action<LocationResolution>? SelectFallbackLocations { get; set; }
+    public ObservableCollection<ProfileRowViewModel> Profiles { get; } = [];
+    public ObservableCollection<EnvironmentRow> EnvironmentRows { get; } = [];
+    public ObservableCollection<string> Records { get; } = [];
+    public IReadOnlyList<ChoiceOption> DefaultProxyChoices { get; } = [new("preserve", "保留 Codex 当前设置"), new("system", "使用系统代理"), new("direct", "直连")];
+    public bool HasProfiles => Profiles.Count > 0;
+    public bool HasNoProfiles => Profiles.Count == 0;
+    public bool IsIdle => !IsBusy;
+    public bool IsProgressIndeterminate => IsBusy && ProgressPercent == 0;
+    public bool HasEditor => Editor is not null;
+    public bool HasRecords => Records.Count > 0;
+    public bool CanDownload => _lastUpdate is { IsNewer: true, InstallerUrl: not null, ChecksumUrl: not null } && _downloadedInstaller is null;
+    public bool CanInstall => _downloadedInstaller is not null;
+    public bool HasNewVersion => _lastUpdate?.IsNewer == true;
+    public bool CanRepairProject { get; private set; }
+    public bool CanRepairDesktop { get; private set; }
+    public Func<string, string, bool> Confirm { get; set; } = (message, title) => MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+
+    [ObservableProperty] private string currentPage = "accounts";
+    [ObservableProperty] private string searchText = "";
+    [ObservableProperty] private string accountFilter = "all";
+    [ObservableProperty] private string currentAccount = "尚未导入当前账号";
+    [ObservableProperty] private string processStatus = "尚未检查";
     [ObservableProperty] private string footerStatus = "就绪";
-    [ObservableProperty] private string logText = "";
+    [ObservableProperty] private string operationStatus = "可在账号卡片中切换账号或修改模型设置。";
     [ObservableProperty] private int progressPercent;
+    [ObservableProperty] private string resultIcon = "info";
     [ObservableProperty] private bool isBusy;
+    [ObservableProperty] private bool isCancelling;
+    [ObservableProperty] private bool isCheckingUpdates;
+    [ObservableProperty] private string environmentMessage = "点击“重新检查”读取当前运行环境。";
+    [ObservableProperty] private string projectMessage = "检查聊天与项目的关联。";
+    [ObservableProperty] private string desktopMessage = "检查账号界面状态与共享项目的兼容情况。";
+    [ObservableProperty] private string historyMessage = "增量准备共享聊天；需要写入时会先保留备份。";
+    [ObservableProperty] private string updateTitle = "检查应用更新";
+    [ObservableProperty] private string updateStatus = "更新来源 GitHub Releases。";
+    [ObservableProperty] private string releaseNotesTitle = "当前版本公告 · v" + ReleaseAnnouncement.CurrentVersion;
+    [ObservableProperty] private string releaseNotesText = ReleaseAnnouncement.ForDisplay(ReleaseAnnouncement.CurrentMarkdown);
+    [ObservableProperty] private string lastUpdateCheck = "尚未检查";
+    [ObservableProperty] private string preferencesMessage = "默认策略只在账号选择“沿用默认策略”时使用。";
+    [ObservableProperty] private string locationMessage = "应用自动使用默认或已找到的有效目录，无需手动填写。";
+    [ObservableProperty] private bool hasUnavailableLocations;
+    [ObservableProperty] private string storageMessage = "启动和业务操作结束后自动检查存储保留策略。";
+    [ObservableProperty] private bool autoCheckUpdates = true;
+    [ObservableProperty] private string defaultOfficialProxy = "preserve";
+    [ObservableProperty] private string defaultApiProxy = "preserve";
+    [ObservableProperty] private string defaultContextWindow = "";
+    [ObservableProperty] private int settingsTab;
+    [ObservableProperty] private ProfileEditorViewModel? editor;
 
-    public Func<Task>? AddApiRequested { get; set; }
-    public Func<Task>? ImportOfficialRequested { get; set; }
-    public Func<ProfileRowViewModel, Task>? ReauthorizeRequested { get; set; }
-    public Func<ProfileRowViewModel, Task>? EditRequested { get; set; }
-    public Func<ProfileRowViewModel, Task>? RenameRequested { get; set; }
-
-    public string SelectedCatalogPath => SelectedProfile?.CatalogPath ?? "";
-    public string SelectedCatalogSource => SelectedProfile?.CatalogSource ?? "";
-    public string SelectedCatalogUpdated => SelectedProfile?.CatalogUpdated ?? "";
-    public string SelectedCatalogMessage => SelectedProfile?.CatalogMessage ?? "";
+    public async Task InitializeAsync()
+    {
+        await RefreshProcessStatusAsync();
+        await RecheckDataLocationsAsync();
+        await MaintainStorageAsync();
+        if (AutoCheckUpdates && Environment.GetEnvironmentVariable("CODEX_SWITCHER_DISABLE_UPDATE_CHECK") != "1") await CheckUpdatesAsync();
+    }
 
     [RelayCommand]
     private void Refresh()
     {
         try
         {
-            var selectedId = SelectedProfile?.Id;
             var registry = _host.Registry.Load();
-            Profiles.Clear();
-            foreach (var profile in _host.Service.ListProfiles())
+            ProfileEntry? live = null;
+            try { live = _host.Service.GetLiveProfile(); CurrentAccount = live is null ? "当前身份未登记 · 可导入当前账号" : live.Name + (live is ApiProfile ? " · API" : " · 官方"); }
+            catch { CurrentAccount = "当前身份暂不可确认 · 请检查环境"; }
+            _allProfiles.Clear();
+            foreach (var profile in registry.AllProfiles().OrderByDescending(item => item.Id == live?.Id).ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
             {
                 var kind = profile is ApiProfile ? ProfileKind.Api : ProfileKind.Official;
-                var sourceName = profile is ApiProfile api && api.ModelCatalogMode == "official"
-                    ? registry.OfficialProfiles.FirstOrDefault(item => item.Id == api.ModelCatalogSourceOfficialId)?.Name ?? "来源未找到"
-                    : "";
-                var status = _host.Catalogs.GetStatus(profile, kind, sourceName);
-                Profiles.Add(new ProfileRowViewModel(profile, kind, status));
+                var source = profile is ApiProfile api ? registry.OfficialProfiles.FirstOrDefault(item => item.Id == api.ModelCatalogSourceOfficialId)?.Name : "";
+                _allProfiles.Add(new(profile, kind, _host.Catalogs.GetStatus(profile, kind, source), profile.Id == live?.Id));
             }
-            CurrentMode = _host.Service.GetLiveMode();
-            DataLocation = $"CODEX_HOME：{_host.Paths.CodexHome}    数据：{_host.Paths.DataDirectory}";
-            FooterStatus = $"{Profiles.Count} 个档案";
-            SelectedProfile = Profiles.FirstOrDefault(profile => profile.Id == selectedId) ?? Profiles.FirstOrDefault();
+            ApplyFilter();
         }
-        catch (Exception ex) { OperationStatus = "读取档案失败：" + ex.Message; }
+        catch (Exception ex) { OperationStatus = Safe("读取档案失败：" + ex.Message); }
+    }
+
+    private void ApplyFilter()
+    {
+        Profiles.Clear();
+        foreach (var row in _allProfiles.Where(item => (AccountFilter == "all" || AccountFilter == (item.IsOfficial ? "official" : "api")) &&
+                     (string.IsNullOrWhiteSpace(SearchText) || item.Name.Contains(SearchText.Trim(), StringComparison.CurrentCultureIgnoreCase) || item.Endpoint.Contains(SearchText.Trim(), StringComparison.OrdinalIgnoreCase)))) Profiles.Add(row);
+        OnPropertyChanged(nameof(HasProfiles)); OnPropertyChanged(nameof(HasNoProfiles));
+    }
+    partial void OnSearchTextChanged(string value) => ApplyFilter();
+    partial void OnAccountFilterChanged(string value) => ApplyFilter();
+    partial void OnIsBusyChanged(bool value) { OnPropertyChanged(nameof(IsIdle)); OnPropertyChanged(nameof(IsProgressIndeterminate)); }
+    partial void OnProgressPercentChanged(int value) => OnPropertyChanged(nameof(IsProgressIndeterminate));
+    partial void OnEditorChanged(ProfileEditorViewModel? value) => OnPropertyChanged(nameof(HasEditor));
+
+    [RelayCommand] private void Navigate(string page) => CurrentPage = page;
+    [RelayCommand] private void ShowUpdates() { SettingsTab = 0; CurrentPage = "settings"; if (LastUpdateCheck == "尚未检查" && Environment.GetEnvironmentVariable("CODEX_SWITCHER_DISABLE_UPDATE_CHECK") != "1") _ = CheckUpdatesAsync(); }
+    [RelayCommand] private void AddApi() => OpenEditor(null, ProfileKind.Api, 0);
+    [RelayCommand] private void AddOfficial() => OpenEditor(null, ProfileKind.Official, 0);
+    [RelayCommand] private void EditProfile(ProfileRowViewModel row) => OpenEditor(row.Id, row.Kind, 0);
+    [RelayCommand] private void ModelSettings(ProfileRowViewModel row) => OpenEditor(row.Id, row.Kind, 1);
+    private void OpenEditor(string? id, ProfileKind kind, int tab)
+    {
+        if (IsBusy) return;
+        try { Editor = new(_host, id is null ? null : _host.Registry.Load().Find(kind, id), kind, tab); }
+        catch (Exception ex) { OperationStatus = Safe("无法打开账号配置：" + ex.Message); }
+    }
+    [RelayCommand]
+    private void CloseEditor()
+    {
+        if (IsBusy || Editor is null) return;
+        if (Editor.HasChanges && !Confirm("放弃本次尚未保存的修改？", "关闭账号配置")) return;
+        Editor.ApiKey = ""; Editor = null;
     }
 
     [RelayCommand]
-    private async Task SwitchSelectedAsync()
+    private async Task SaveEditorAsync()
     {
-        if (SelectedProfile is null) { OperationStatus = "请先选择一个账号档案。"; return; }
-        await RunOperationAsync("切换账号", async token =>
+        if (Editor is null || IsBusy) return;
+        var editor = Editor;
+        ProfileEditRequest request;
+        try { request = editor.CreateRequest(); editor.ValidationMessage = ""; }
+        catch (Exception ex) { editor.ValidationMessage = Safe(ex.Message); return; }
+        var saved = await RunOperationAsync("保存账号", async token =>
         {
-            var progress = new Progress<SwitchProgress>(ReportProgress);
-            var result = await _host.Service.SwitchAsync(SelectedProfile.Kind, SelectedProfile.Id, false, false, progress, token).ConfigureAwait(true);
-            AppendLog(result.Notices.Count == 0 ? "账号切换完成。" : string.Join(Environment.NewLine, result.Notices));
-        }).ConfigureAwait(true);
-        Refresh();
-    }
-
-    [RelayCommand]
-    private async Task ImportCurrentAsync()
-    {
-        await RunOperationAsync("导入当前账号", async token =>
-        {
+            if (request.Kind == ProfileKind.Official && request.Id is null)
+            {
+                var profile = await _host.Service.AddOfficialInteractivelyAsync(request.Name, cancellationToken: token);
+                await using var settingsLease = await _host.OperationLock.AcquireAsync(DataDirectory, CancellationToken.None);
+                _host.Profiles.UpdateSettings(ProfileKind.Official, profile.Id, request.Settings);
+                return "官方账号已保存。";
+            }
+            await using var lease = await _host.OperationLock.AcquireAsync(DataDirectory, token);
             token.ThrowIfCancellationRequested();
-            var profile = await _host.Service.ImportCurrentProfileAsync(token).ConfigureAwait(true);
-            AppendLog($"已导入当前{(profile is ApiProfile ? "API" : "官方")}档案：{profile.Name}。原文件未修改。 ");
-        }).ConfigureAwait(true);
-        Refresh();
+            if (request.Id is not null)
+            {
+                var current = _host.Registry.Load().Find(request.Kind, request.Id);
+                if (JsonSerializer.Serialize(current, current.GetType()) != request.ExpectedProfile) throw new IOException("此账号已被其他窗口修改，请关闭配置面板并重新打开。未覆盖外部修改。");
+            }
+            if (request.Kind == ProfileKind.Api)
+            {
+                if (request.Id is null) _host.Profiles.AddApi(new(request.Name, request.BaseUrl, request.ApiKey, request.ManualPath, request.Settings, request.CatalogMode, request.SourceOfficialId));
+                else _host.Profiles.EditApiProfile(request.Id, request.Settings, request.BaseUrl, request.CatalogMode, request.ManualPath, request.SourceOfficialId, request.ApiKey, request.Name);
+            }
+            else _host.Profiles.UpdateSettings(request.Kind, request.Id!, request.Settings, request.Name);
+            return "账号配置已保存；下次切换或重新应用时生效。";
+        });
+        if (saved) { editor.ApiKey = ""; Editor = null; Refresh(); }
+        else editor.ValidationMessage = OperationStatus;
     }
 
     [RelayCommand]
-    private async Task AddApiAsync() { if (AddApiRequested is not null) await AddApiRequested().ConfigureAwait(true); Refresh(); }
-    [RelayCommand]
-    private async Task ImportOfficialAsync() { if (ImportOfficialRequested is not null) await ImportOfficialRequested().ConfigureAwait(true); Refresh(); }
-    private bool CanReauthorizeSelected() => SelectedProfile?.Kind == ProfileKind.Official;
-
-    [RelayCommand(CanExecute = nameof(CanReauthorizeSelected))]
-    private async Task ReauthorizeSelectedAsync() { if (SelectedProfile is not null && ReauthorizeRequested is not null) await ReauthorizeRequested(SelectedProfile).ConfigureAwait(true); Refresh(); }
-    [RelayCommand]
-    private async Task EditSelectedAsync() { if (SelectedProfile is not null && EditRequested is not null) await EditRequested(SelectedProfile).ConfigureAwait(true); Refresh(); }
-    [RelayCommand]
-    private async Task RenameSelectedAsync() { if (SelectedProfile is not null && RenameRequested is not null) await RenameRequested(SelectedProfile).ConfigureAwait(true); Refresh(); }
-
-    [RelayCommand]
-    private void DeleteSelected()
+    private void OpenEditorCatalog(string target)
     {
-        if (SelectedProfile is null) return;
-        var answer = MessageBox.Show($"确认删除档案“{SelectedProfile.Name}”？已保存的凭据文件也会删除。", "删除档案", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.Yes) return;
-        try
-        {
-            _host.Profiles.Remove(SelectedProfile.Kind, SelectedProfile.Id, CurrentMode == SelectedProfile.Kind.ToLegacyValue() ? FindActiveId(SelectedProfile.Kind) : null);
-            Refresh();
-        }
-        catch (Exception ex) { OperationStatus = "删除失败：" + ex.Message; }
+        if (Editor is null) return;
+        try { OpenLocalPath(Editor.ResolvedCatalogPath, target == "folder"); }
+        catch (Exception ex) { Editor.ValidationMessage = Safe("无法打开目录：" + ex.Message); }
     }
 
     [RelayCommand]
-    private void OpenCatalog()
+    private void OpenDataLocation(string target)
     {
-        if (SelectedProfile is null) return;
-        try { OpenPath(EnsureOpenableCatalog(SelectedProfile), false); }
-        catch (Exception ex) { OperationStatus = "打开模型目录失败：" + ex.Message; }
+        var path = target switch { "home" => CodexHome, "catalogs" => SnapshotsDirectory, "backups" => BackupsDirectory, _ => DataDirectory };
+        try { OpenLocalPath(path); }
+        catch (Exception ex) { OperationStatus = Safe(ex.Message); }
     }
-    [RelayCommand]
-    private void OpenCatalogFolder()
+    [RelayCommand] private void OpenReleasePage() => OpenUrl(_lastUpdate?.ReleaseUrl ?? "https://github.com/IIMovoMII/Codex-Profile-Switcher/releases");
+    [RelayCommand] private void CopyRecords() { try { Clipboard.SetText(string.Join(Environment.NewLine, Records)); FooterStatus = "操作记录已复制"; } catch { FooterStatus = "暂时无法访问剪贴板"; } }
+    [RelayCommand] private void ReadRecords()
     {
-        if (SelectedProfile is null) return;
-        try { OpenPath(EnsureOpenableCatalog(SelectedProfile), true); }
-        catch (Exception ex) { OperationStatus = "打开模型目录文件夹失败：" + ex.Message; }
+        try { Records.Clear(); foreach (var line in _host.OperationHistory.ReadRecent().Reverse()) Records.Add(Safe(line)); OnPropertyChanged(nameof(HasRecords)); }
+        catch (Exception ex) { FooterStatus = Safe("记录暂不可读：" + ex.Message); }
     }
-    [RelayCommand]
-    private void OpenReleasePage() => OpenUrl(_lastUpdate?.ReleaseUrl ?? "https://github.com/IIMovoMII/Codex-Profile-Switcher/releases");
-
-    [RelayCommand]
-    private async Task CheckEnvironmentAsync()
+    private void AppendLog(string text)
     {
-        await RunOperationAsync("环境检查", async token =>
-        {
-            var available = await _host.Runtime.IsAvailableAsync(token).ConfigureAwait(true);
-            var running = await _host.Runtime.FindRunningProcessNamesAsync(token).ConfigureAwait(true);
-            var overrides = _host.Runtime.GetAuthenticationOverrides();
-            var lockBusy = await IsOperationLockBusyAsync(token).ConfigureAwait(true);
-            var recoveryPending = _host.HasPendingRecovery;
-            EnvironmentSummary = $"CODEX_HOME：{_host.Paths.CodexHome}{Environment.NewLine}" +
-                $"数据目录：{_host.Paths.DataDirectory}{Environment.NewLine}" +
-                $"Codex 命令：{(available ? "可用" : "未确认（可继续维护档案）")}{Environment.NewLine}" +
-                $"运行中的 Codex 进程：{(running.Count == 0 ? "未发现" : string.Join(", ", running))}{Environment.NewLine}" +
-                $"切换互斥锁：{(lockBusy ? "正在使用" : "可用")}{Environment.NewLine}" +
-                $"待恢复操作记录：{(recoveryPending ? "存在，下一次业务操作会先尝试恢复" : "未发现")}{Environment.NewLine}" +
-                $"认证环境变量覆盖：{(overrides.Count == 0 ? "未发现" : string.Join(", ", overrides))}";
-            OperationStatus = "环境检查完成。";
-            AppendLog($"环境检查完成：Codex {(available ? "可用" : "未确认")}，运行进程 {running.Count} 个，互斥锁 {(lockBusy ? "占用" : "可用")}，恢复记录 {(recoveryPending ? "存在" : "无")}。");
-        }).ConfigureAwait(true);
+        try { _host.OperationHistory.Append(Safe(text)); ReadRecords(); }
+        catch { FooterStatus = "操作结果已显示，本地记录暂不可写"; }
     }
-
-    [RelayCommand]
-    private Task PrepareHistoryAsync() => PrepareHistoryCoreAsync(false);
-    [RelayCommand]
-    private Task FullHistoryAsync() => PrepareHistoryCoreAsync(true);
-
-    [RelayCommand]
-    private Task ProjectScanAsync() => RunProjectProjectionAsync(false);
-
-    [RelayCommand]
-    private Task ProjectRepairAsync() => RunProjectProjectionAsync(true);
-
-    [RelayCommand]
-    private async Task CheckUpdatesAsync()
-    {
-        try
-        {
-            _lastUpdate = await _host.Updates.CheckAsync().ConfigureAwait(true);
-            UpdateStatus = _lastUpdate.Message + (_lastUpdate.IsNewer ? " 可打开发行页查看安装包。" : "");
-        }
-        catch (Exception ex) { UpdateStatus = "更新检查失败：" + ex.Message; }
-    }
-
-    [RelayCommand]
-    private async Task DownloadAndInstallUpdateAsync()
-    {
-        if (_lastUpdate is null || !_lastUpdate.IsNewer) { OperationStatus = "当前没有可安装的新版本。"; return; }
-        if (string.IsNullOrWhiteSpace(_lastUpdate.InstallerUrl) || string.IsNullOrWhiteSpace(_lastUpdate.ChecksumUrl))
-        {
-            MessageBox.Show("GitHub Release 缺少安装包或 SHA-256 清单。请打开项目发行页查看。", "无法安装更新", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-        if (MessageBox.Show($"下载并校验版本 {_lastUpdate.LatestVersion} 的安装包？", "更新 Codex Profile Switcher", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        try
-        {
-            var folder = Path.Combine(Path.GetTempPath(), "CodexProfileSwitcher-Updates");
-            var installer = await _host.Updates.DownloadAndVerifyAsync(_lastUpdate, folder, new Progress<SwitchProgress>(ReportProgress)).ConfigureAwait(true);
-            if (MessageBox.Show("安装包 SHA-256 校验通过。现在启动安装程序？", "更新已准备", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
-                await _host.Updates.LaunchInstallerAsync(installer).ConfigureAwait(true);
-        }
-        catch (Exception ex) { UpdateStatus = "更新下载失败：" + ex.Message; }
-    }
-
-    private async Task PrepareHistoryCoreAsync(bool full)
-    {
-        await RunOperationAsync(full ? "完整历史扫描" : "历史兼容准备", async token =>
-        {
-            var result = await _host.Service.PrepareHistoryAsync(full, new Progress<SwitchProgress>(ReportProgress), token).ConfigureAwait(true);
-            AppendLog(result.Message);
-        }).ConfigureAwait(true);
-    }
-
-    private async Task RunProjectProjectionAsync(bool repair)
-    {
-        await RunOperationAsync(repair ? "项目归属修复" : "项目归属检查", async token =>
-        {
-            var result = await _host.Service.PrepareProjectProjectionAsync(repair, false, new Progress<SwitchProgress>(ReportProgress), token).ConfigureAwait(true);
-            AppendLog(result.Message);
-        }).ConfigureAwait(true);
-    }
-
-    private async Task RunOperationAsync(string title, Func<CancellationToken, Task> operation)
-    {
-        if (_busy) { OperationStatus = "已有操作正在进行。"; return; }
-        _busy = true; IsBusy = true; ProgressPercent = 0; OperationStatus = title + "……";
-        using var cancellation = new CancellationTokenSource();
-        _operationCancellation = cancellation;
-        try { await Task.Run(() => operation(cancellation.Token), cancellation.Token).ConfigureAwait(true); OperationStatus = title + "完成。"; }
-        catch (OperationCanceledException) { OperationStatus = title + "已取消；必要的恢复步骤已完成。"; AppendLog(OperationStatus); }
-        catch (Exception ex) { OperationStatus = title + "失败：" + ex.Message; AppendLog(OperationStatus); }
-        finally { _operationCancellation = null; _busy = false; IsBusy = false; }
-    }
-
-    [RelayCommand]
-    private void CancelOperation() => _operationCancellation?.Cancel();
-
-    partial void OnSelectedProfileChanged(ProfileRowViewModel? value)
-    {
-        ReauthorizeSelectedCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(SelectedCatalogPath));
-        OnPropertyChanged(nameof(SelectedCatalogSource));
-        OnPropertyChanged(nameof(SelectedCatalogUpdated));
-        OnPropertyChanged(nameof(SelectedCatalogMessage));
-    }
-
-    private void ReportProgress(SwitchProgress value) { ProgressPercent = value.Percent ?? ProgressPercent; OperationStatus = value.Stage + "：" + value.Message; AppendLog(OperationStatus); }
-    private void AppendLog(string value)
-    {
-        var display = value.Replace('\r', ' ').Replace('\n', ' ');
-        try { _host.OperationHistory.Append(display); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.DecoderFallbackException) { FooterStatus = "本地操作记录不可写"; }
-        var entries = string.IsNullOrWhiteSpace(LogText) ? Array.Empty<string>() : LogText.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).TakeLast(199).ToArray();
-        LogText = string.Join(Environment.NewLine, entries.Append(display));
-    }
-
-    private async Task<bool> IsOperationLockBusyAsync(CancellationToken cancellationToken)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
-        try
-        {
-            await using var lease = await _host.OperationLock.AcquireAsync(_host.Paths.DataDirectory, linked.Token).ConfigureAwait(true);
-            return false;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return true; }
-    }
-
-    private string? FindActiveId(ProfileKind kind) { var registry = _host.Registry.Load(); return kind == ProfileKind.Api ? registry.ActiveApiProfileId : registry.ActiveOfficialProfileId; }
-
-    private string EnsureOpenableCatalog(ProfileRowViewModel row)
-    {
-        if (row.Kind != ProfileKind.Api) return _host.Service.ResolveModelCatalogPath(row.Kind, row.Id);
-        var profile = (ApiProfile)_host.Registry.Load().Find(ProfileKind.Api, row.Id);
-        return profile.ModelCatalogMode == "official"
-            ? _host.Service.ResolveModelCatalogPath(ProfileKind.Api, row.Id)
-            : _host.Service.EnsureManualModelCatalogFile(row.Id);
-    }
-
-    private static void OpenPath(string? path, bool folder)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return;
-        var target = folder ? Path.GetDirectoryName(path) : path;
-        if (string.IsNullOrWhiteSpace(target)) return;
-        if (!File.Exists(target) && !Directory.Exists(target)) { MessageBox.Show("文件或文件夹尚不存在。", "模型目录", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-        Process.Start(new ProcessStartInfo(folder ? "explorer.exe" : target) { UseShellExecute = true, Arguments = folder ? $"\"{target}\"" : "" });
-    }
+    private static string Safe(string value) => OperationHistoryStore.SanitizeMessage(value);
     private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    private static void OpenLocalPath(string path, bool parent = false)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new FileNotFoundException("尚未配置目录路径。请先保存或选择一个目录文件。");
+        var full = Path.GetFullPath(path); var target = parent ? Path.GetDirectoryName(full)! : full;
+        if (!File.Exists(target) && !Directory.Exists(target)) throw new FileNotFoundException("文件或文件夹尚不存在。可选择现有的完整模型目录 JSON 文件。");
+        if (Directory.Exists(target)) Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true, ArgumentList = { target } });
+        else Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+    }
 }
 
-public sealed class ProfileRowViewModel(ProfileEntry profile, ProfileKind kind, CatalogDisplay status)
+public sealed record EnvironmentRow(string Icon, string Label, string Status, string Detail, bool Warning = false);
+public sealed class ProfileRowViewModel(ProfileEntry profile, ProfileKind kind, CatalogDisplay status, bool isCurrent = false)
 {
     public string Id => profile.Id;
     public string Name => profile.Name;
     public ProfileKind Kind => kind;
-    public string KindLabel => kind == ProfileKind.Api ? "API" : "官方";
+    public bool IsOfficial => Kind == ProfileKind.Official;
+    public bool IsCurrent => isCurrent;
+    public bool IsNotCurrent => !isCurrent;
+    public string KindLabel => IsOfficial ? "官方" : "API";
+    public string IconKind => IsOfficial ? "user" : "layers";
+    public string Endpoint => profile is ApiProfile api && Uri.TryCreate(api.BaseUrl, UriKind.Absolute, out var uri) ? uri.Authority : "";
+    public string ModelSummary => profile.ToSettings().Model.Kind switch { SettingChoiceKind.Explicit => "模型：" + profile.ToSettings().Model.Value, SettingChoiceKind.PreserveCurrent => "模型：保留当前设置", _ => "模型：沿用默认策略" };
+    public string Summary => string.IsNullOrWhiteSpace(Endpoint) ? ModelSummary : Endpoint + " · " + ModelSummary;
     public string CatalogMode => status.Mode;
     public string CatalogPolicy => profile is ApiProfile api ? api.ModelCatalogMode : "official-native";
     public string CatalogPath => status.Path;
-    public string CatalogSource => !string.IsNullOrWhiteSpace(status.SourceName) ? status.SourceName :
-        kind == ProfileKind.Official ? "Codex 原生目录" : CatalogPolicy == "official" ? "指定官方来源不可用" : "手动维护文件";
-    public string CatalogUpdated => DateTimeOffset.TryParse(status.UpdatedUtc, out var updated)
-        ? updated.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "未找到";
-    public string CatalogMessage => status.Message + (string.IsNullOrWhiteSpace(status.SourceName) ? "" : $" 来源：{status.SourceName}");
-    public string Summary => kind == ProfileKind.Api ? $"中转地址：{((ApiProfile)profile).BaseUrl}" : $"账号标识：{((OfficialProfile)profile).Owner[..Math.Min(12, ((OfficialProfile)profile).Owner.Length)]}……";
+    public string CatalogSource => !string.IsNullOrWhiteSpace(status.SourceName) ? status.SourceName : IsOfficial ? "Codex 原生目录" : CatalogPolicy == "official" ? "指定官方来源不可用" : "手动维护文件";
+    public string CatalogUpdated => DateTimeOffset.TryParse(status.UpdatedUtc, out var time) ? time.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "未找到";
+    public string CatalogMessage => status.Message + (string.IsNullOrWhiteSpace(status.SourceName) ? "" : " 来源：" + status.SourceName);
 }

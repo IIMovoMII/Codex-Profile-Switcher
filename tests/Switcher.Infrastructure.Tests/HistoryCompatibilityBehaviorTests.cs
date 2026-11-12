@@ -10,6 +10,20 @@ namespace Switcher.Infrastructure.Tests;
 public sealed class HistoryCompatibilityBehaviorTests
 {
     [Fact]
+    public async Task Repeated_full_scans_without_changes_do_not_generate_empty_backups()
+    {
+        using var fixture = new Fixture();
+        var directory = Path.Combine(fixture.Paths.CodexHome, "sessions"); Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "rollout.jsonl"), "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread-clean\",\"model_provider\":\"openai\"}}\n");
+        for (var index = 0; index < 3; index++)
+        {
+            var result = await fixture.Service.PrepareAsync(true, null, CancellationToken.None);
+            Assert.True(result.Prepared); Assert.False(result.Changed); Assert.Equal("", result.BackupDirectory);
+        }
+        Assert.True(File.Exists(fixture.Paths.HistoryReadyFile)); Assert.False(Directory.Exists(fixture.Paths.HistoryBackupsDirectory));
+    }
+
+    [Fact]
     public async Task Preparation_rewrites_related_history_once_and_keeps_a_wal_backup()
     {
         using var fixture = new Fixture();

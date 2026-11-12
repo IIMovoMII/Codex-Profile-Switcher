@@ -35,9 +35,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             return new HistoryPreparationResult(true, false, JoinMessages(recovered, "已准备且历史未变化"), rolloutFiles.Length, databasePaths.Length, paths.HistoryBackupsDirectory);
 
         var backupRoot = paths.HistoryBackupsDirectory;
-        files.CreateDirectory(backupRoot);
         var backupDirectory = Path.Combine(backupRoot, DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "-" + Guid.NewGuid().ToString("N"));
-        files.CreateDirectory(backupDirectory);
         var filePlans = new List<FilePlan>();
         var threadIds = new HashSet<string>(StringComparer.Ordinal);
         var index = 0;
@@ -62,6 +60,12 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             dbPlans.Add(new DatabasePlan(database, rows, backupPath));
         }
 
+        if (filePlans.Count == 0 && dbPlans.Count == 0)
+        {
+            WriteReady(readyPath, inputFingerprint, rolloutFiles.Length, databasePaths.Length);
+            return new HistoryPreparationResult(true, false, JoinMessages(recovered, "历史未发现需要修改的记录"), rolloutFiles.Length, databasePaths.Length, "");
+        }
+        files.CreateDirectory(backupDirectory);
         var databaseTransactions = new List<(DatabasePlan Plan, SqliteConnection Connection, SqliteTransaction Transaction)>();
         string? manifestPath = null;
         PreparedManifest? preparedManifest = null;

@@ -1,8 +1,12 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Switcher.Core</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\zh-CN\releases\$(Version).md" LogicalName="Switcher.Core.ReleaseNotes.md" />
+  </ItemGroup>
 
 </Project>

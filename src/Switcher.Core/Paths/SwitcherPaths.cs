@@ -2,6 +2,8 @@ namespace Switcher.Core.Paths;
 
 public sealed record SwitcherPaths(string CodexHome, string DataDirectory, string? CodexExecutable = null)
 {
+    public string CodexHomeOrigin { get; init; } = "显式指定";
+    public string DataDirectoryOrigin { get; init; } = "显式指定";
     public string ConfigFile => Path.Combine(CodexHome, "config.toml");
     public string AuthFile => Path.Combine(CodexHome, "auth.json");
     public string ModelCacheFile => Path.Combine(CodexHome, "models_cache.json");

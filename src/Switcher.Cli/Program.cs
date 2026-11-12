@@ -5,6 +5,7 @@ using Switcher.Core.Paths;
 using Switcher.Core.Profiles;
 using Switcher.Core.Switching;
 using Switcher.Infrastructure;
+using Switcher.Infrastructure.Configuration;
 
 namespace Switcher.Cli;
 
@@ -24,8 +25,12 @@ internal static class Program
             var options = CliOptions.Parse(args);
             if (options.Help || options.Command is null) { PrintHelp(); return 0; }
             if (options.Command is "menu" or "setup" or "init") return LaunchDesktop(options.CodexHome, options.DataDirectory, options.CodexExecutable);
-            var paths = SwitcherPaths.FromEnvironment(options.CodexHome, options.DataDirectory, options.CodexExecutable);
-            return await ExecuteAsync(ApplicationHost.Create(paths, options.CodexExecutable), options, cancellation.Token).ConfigureAwait(false);
+            var resolution = new DataLocationResolver().Resolve(options.CodexHome, options.DataDirectory, options.CodexExecutable);
+            if (!resolution.IsValid) throw new IOException(resolution.Message + " 可使用 --codex-home 和 --data-dir 指定原有目录。");
+            var host = ApplicationHost.Create(resolution.Paths, options.CodexExecutable);
+            await host.Storage.TryMaintainAsync().ConfigureAwait(false);
+            try { return await ExecuteAsync(host, options, cancellation.Token).ConfigureAwait(false); }
+            finally { await host.Storage.TryMaintainAsync().ConfigureAwait(false); }
         }
         catch (OperationCanceledException) { return 130; }
         catch (Exception ex) { Console.Error.WriteLine(Sanitize(ex.Message)); return 1; }

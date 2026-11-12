@@ -30,6 +30,26 @@ public sealed class SwitcherService(
         return DetermineLiveKind(files.ReadAllText(paths.AuthFile), files.ReadAllText(paths.ConfigFile)).ToLegacyValue();
     }
 
+    /// <summary>Identifies live credentials; an active registry pointer alone is not proof.</summary>
+    public ProfileEntry? GetLiveProfile()
+    {
+        if (!files.FileExists(paths.AuthFile) || !files.FileExists(paths.ConfigFile)) return null;
+        var auth = files.ReadAllText(paths.AuthFile);
+        var config = files.ReadAllText(paths.ConfigFile);
+        var kind = DetermineLiveKind(auth, config);
+        var registry = profiles.Load();
+        if (kind == ProfileKind.Official)
+        {
+            var owner = authClassifier.GetOfficialOwner(auth);
+            return registry.OfficialProfiles.FirstOrDefault(profile => profile.Owner == owner);
+        }
+        var baseUrl = configEditor.GetTopLevel(config, "openai_base_url")?.TrimEnd('/');
+        var key = authClassifier.GetApiKey(auth);
+        var matches = registry.ApiProfiles.Where(profile => string.Equals(profile.BaseUrl.TrimEnd('/'), baseUrl, StringComparison.OrdinalIgnoreCase))
+            .Where(profile => authClassifier.GetApiKey(profiles.ReadAuthentication(profile, ProfileKind.Api)) == key).ToArray();
+        return matches.FirstOrDefault(profile => profile.Id == registry.ActiveApiProfileId) ?? matches.FirstOrDefault();
+    }
+
     public async Task<SwitchResult> SwitchAsync(ProfileKind targetKind, string? selector = null, bool quick = false,
         bool fullHistoryScan = false, IProgress<SwitchProgress>? progress = null, CancellationToken cancellationToken = default)
     {

@@ -21,10 +21,15 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           $version = (Get-Content -Raw version.txt).Trim()
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version.txt: $version" }
           if ($env:RELEASE_TAG -and $env:RELEASE_TAG.TrimStart('v') -ne $version) { throw "Release tag and version.txt differ." }
+          $notesPath = "docs/zh-CN/releases/$version.md"
+          if (-not (Test-Path -LiteralPath $notesPath)) { throw 'Version release notes are missing.' }
+          $notes = [IO.File]::ReadAllText((Join-Path $PWD $notesPath)).Replace("`r`n", "`n").Trim()
+          if ($env:RELEASE_TAG -and $env:RELEASE_BODY.Replace("`r`n", "`n").Trim() -cne $notes) { throw 'GitHub Release body differs from the bundled release notes.' }
 
       - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@v4

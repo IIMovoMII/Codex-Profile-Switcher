@@ -12,6 +12,7 @@ using Switcher.Infrastructure.Profiles;
 using Switcher.Infrastructure.Security;
 using Switcher.Infrastructure.Switching;
 using Switcher.Infrastructure.Updates;
+using Switcher.Infrastructure.Storage;
 
 namespace Switcher.Infrastructure;
 
@@ -45,6 +46,7 @@ public sealed class ApplicationHost
         OperationHistory = operationHistory;
         History = history;
         Files = files;
+        Storage = new StorageMaintenanceService(paths, operationLock);
     }
 
     public SwitcherPaths Paths { get; }
@@ -59,12 +61,18 @@ public sealed class ApplicationHost
     public IOperationLock OperationLock { get; }
     public IOperationHistory OperationHistory { get; }
     public HistoryCompatibilityService History { get; }
+    public StorageMaintenanceService Storage { get; }
     public bool HasPendingRecovery => Files.FileExists(Paths.TransactionFile) || History.HasPendingRecovery;
     private ISwitcherFileSystem Files { get; }
 
     public static ApplicationHost Create(SwitcherPaths? paths = null, string? codexExecutable = null)
     {
-        paths ??= SwitcherPaths.FromEnvironment(codexExecutable: codexExecutable);
+        if (paths is null)
+        {
+            var resolution = new DataLocationResolver().Resolve(codexExecutable: codexExecutable);
+            if (!resolution.IsValid) throw new IOException(resolution.Message);
+            paths = resolution.Paths;
+        }
         var files = new PhysicalSwitcherFileSystem();
         var protector = new CurrentUserDpapiProtector(paths.CodexHome);
         var registryStore = new ProfileRegistryStore(files, paths, protector);

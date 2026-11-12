@@ -1,0 +1,53 @@
+<UserControl x:Class="Switcher.Desktop.Views.AccountsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="clr-namespace:Switcher.Desktop.Controls">
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Grid Margin="0,0,0,24">
+            <TextBlock Text="账号" Style="{StaticResource Heading}"/>
+            <Button HorizontalAlignment="Right" Style="{StaticResource PrimaryButton}" Click="ShowMenu" IsEnabled="{Binding IsIdle}" AutomationProperties.Name="添加账号">
+                <StackPanel Orientation="Horizontal"><ui:SymbolIcon Kind="plus" Foreground="White"/><TextBlock Text="添加账号" Foreground="White" Margin="9,0,17,0"/><ui:SymbolIcon Kind="chevron" Foreground="White" Width="15"/></StackPanel>
+                <Button.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><MenuItem Header="添加 API 账号" Command="{Binding AddApiCommand}"/><MenuItem Header="登录并添加官方账号" Command="{Binding AddOfficialCommand}"/><Separator/><MenuItem Header="导入当前账号" Command="{Binding ImportCurrentCommand}"/></ContextMenu></Button.ContextMenu>
+            </Button>
+        </Grid>
+        <Border Grid.Row="1" Style="{StaticResource Surface}" Padding="18,13" Margin="0,0,0,20">
+            <DockPanel><StackPanel Orientation="Horizontal"><ui:SymbolIcon Kind="user" Width="18"/><TextBlock Text="当前使用：" Margin="9,0,0,0"/><TextBlock Text="{Binding CurrentAccount}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="400"/></StackPanel><StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Border Width="1" Height="19" Background="{StaticResource Line}" Margin="20,0"/><ui:SymbolIcon Kind="power" Width="17"/><TextBlock Text="Codex：" Margin="7,0,0,0"/><TextBlock Text="{Binding ProcessStatus}"/></StackPanel></DockPanel>
+        </Border>
+        <Grid Grid.Row="2" Margin="0,0,0,22"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid Width="410" Height="44" HorizontalAlignment="Left">
+                <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="42,11,12,11" AutomationProperties.Name="搜索账号"/>
+                <ui:SymbolIcon Kind="search" HorizontalAlignment="Left" Margin="13,0" Foreground="{StaticResource Muted}"/>
+                <TextBlock VerticalAlignment="Center" Text="搜索账号或 API 地址" Margin="43,0,12,0" Foreground="{StaticResource Muted}" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding SearchText}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+            </Grid>
+            <Border Grid.Column="2" CornerRadius="9" BorderBrush="{StaticResource Line}" BorderThickness="1" Background="#F0FFFFFF"><StackPanel Orientation="Horizontal">
+                <RadioButton Content="全部" Style="{StaticResource Segment}" GroupName="AccountFilter" IsChecked="{Binding AccountFilter, Converter={StaticResource ChoiceEquals}, ConverterParameter=all}"/>
+                <RadioButton Content="官方" Style="{StaticResource Segment}" GroupName="AccountFilter" IsChecked="{Binding AccountFilter, Converter={StaticResource ChoiceEquals}, ConverterParameter=official}"/>
+                <RadioButton Content="API" Style="{StaticResource Segment}" GroupName="AccountFilter" IsChecked="{Binding AccountFilter, Converter={StaticResource ChoiceEquals}, ConverterParameter=api}"/>
+            </StackPanel></Border>
+        </Grid>
+        <ScrollViewer Grid.Row="3" Margin="-2,0,-2,0" Padding="2,0,2,8" Visibility="{Binding HasProfiles, Converter={StaticResource BoolVisibility}}">
+            <ItemsControl ItemsSource="{Binding Profiles}"><ItemsControl.ItemTemplate><DataTemplate>
+                <Border Padding="22" Margin="0,0,0,14" CornerRadius="14" BorderThickness="1" Background="#F2FFFFFF"><Border.Style><Style TargetType="Border"><Setter Property="BorderBrush" Value="White"/><Style.Triggers><DataTrigger Binding="{Binding IsCurrent}" Value="True"><Setter Property="BorderBrush" Value="#62A991"/></DataTrigger></Style.Triggers></Style></Border.Style>
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Border Width="49" Height="49" Background="#E0F1EC" CornerRadius="12" HorizontalAlignment="Left"><ui:SymbolIcon Kind="{Binding IconKind}" Width="28" Height="28"/></Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="9,0,14,0">
+                            <WrapPanel><TextBlock Text="{Binding Name}" FontSize="22" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="260"/><Border Background="#E5EBF0" CornerRadius="11" Padding="10,3" Margin="11,2,0,2"><TextBlock Text="{Binding KindLabel}" FontSize="12" Foreground="#4C6170"/></Border><Border Background="#D8EFC8" CornerRadius="11" Padding="10,3" Margin="9,2,0,2" Visibility="{Binding IsCurrent, Converter={StaticResource BoolVisibility}}"><TextBlock Text="使用中" Foreground="#167138" FontSize="12" FontWeight="SemiBold"/></Border></WrapPanel>
+                            <TextBlock Text="{Binding Summary}" Foreground="{StaticResource Muted}" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Summary}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" IsEnabled="{Binding DataContext.IsIdle, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                            <Button Content="切换" Style="{StaticResource PrimaryButton}" Margin="0,0,10,0" MinWidth="80" Command="{Binding DataContext.SwitchProfileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Visibility="{Binding IsNotCurrent, Converter={StaticResource BoolVisibility}}"/>
+                            <Button Content="模型设置" Command="{Binding DataContext.ModelSettingsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Margin="0,0,10,0"/>
+                            <Button Content="···" FontSize="20" Style="{StaticResource IconButton}" Click="ShowMenu" Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}" AutomationProperties.Name="账号更多操作">
+                                <Button.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                    <MenuItem Header="编辑账号 / 重命名" Command="{Binding PlacementTarget.Tag.EditProfileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" CommandParameter="{Binding}"/>
+                                    <MenuItem Header="重新应用此账号" Command="{Binding PlacementTarget.Tag.SwitchProfileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" CommandParameter="{Binding}"/>
+                                    <MenuItem Header="重新授权并核验身份" Visibility="{Binding IsOfficial, Converter={StaticResource BoolVisibility}}" Command="{Binding PlacementTarget.Tag.ReauthorizeCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" CommandParameter="{Binding}"/>
+                                    <Separator/><MenuItem Header="删除账号" Command="{Binding PlacementTarget.Tag.DeleteProfileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" CommandParameter="{Binding}"/>
+                                </ContextMenu></Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+        </ScrollViewer>
+        <Border Grid.Row="3" Style="{StaticResource Surface}" VerticalAlignment="Top" Padding="36" Visibility="{Binding HasNoProfiles, Converter={StaticResource BoolVisibility}}"><StackPanel HorizontalAlignment="Center"><ui:SymbolIcon Kind="user" Width="42" Height="42" Margin="0,0,0,16"/><TextBlock Text="还没有匹配的账号" FontSize="21" HorizontalAlignment="Center"/><TextBlock Text="添加一个账号，或调整搜索和筛选条件。" Style="{StaticResource Hint}" Margin="0,10,0,18"/><Button Content="导入当前账号" Command="{Binding ImportCurrentCommand}" IsEnabled="{Binding IsIdle}"/></StackPanel></Border>
+    </Grid>
+</UserControl>

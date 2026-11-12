@@ -1,5 +1,8 @@
 using System.Windows;
+using System.IO;
 using Switcher.Infrastructure;
+using Switcher.Infrastructure.Configuration;
+using Switcher.Desktop.Views;
 
 namespace Switcher.Desktop;
 
@@ -11,10 +14,20 @@ public partial class App : Application
         try
         {
             var options = DesktopStartupOptions.Parse(e.Args);
-            var paths = Switcher.Core.Paths.SwitcherPaths.FromEnvironment(options.CodexHome, options.DataDirectory, options.CodexExecutable);
-            var host = ApplicationHost.Create(paths, options.CodexExecutable);
+            var resolver = new DataLocationResolver();
+            var resolution = resolver.Resolve(options.CodexHome, options.DataDirectory, options.CodexExecutable);
+            if (!resolution.IsValid)
+            {
+                if (resolution.ExplicitFailure) throw new IOException(resolution.Message + " 请修正启动参数；不会回退到其他目录。");
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                var recovery = new LocationRecoveryWindow(resolver, resolution);
+                if (recovery.ShowDialog() != true) { Shutdown(1); return; }
+                resolution = recovery.Resolution;
+            }
+            var host = ApplicationHost.Create(resolution.Paths, options.CodexExecutable);
             var window = new MainWindow(host);
             MainWindow = window;
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
             window.Show();
         }
         catch (Exception ex)

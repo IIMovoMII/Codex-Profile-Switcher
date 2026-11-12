@@ -26,6 +26,8 @@ foreach ($directory in @($codexHome, $dataRoot)) { [void][IO.Directory]::CreateD
 $retainedMarker = Join-Path $dataRoot 'retain-marker.txt'
 [IO.File]::WriteAllText($retainedMarker, 'isolated data marker')
 $uninstalled = $false
+$testInstallId = [Guid]::NewGuid().ToString('N')
+$testUninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CPS-Test-' + $testInstallId + '_is1'
 
 function Quote-WindowsArgument([string]$Value) {
     return '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"$', '$1$1\"'), '(\\+)$', '$1$1') + '"'
@@ -33,7 +35,7 @@ function Quote-WindowsArgument([string]$Value) {
 
 function Invoke-IsolatedInstall {
     $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=' + (Quote-WindowsArgument $installRoot) +
-        ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot)
+        ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot) + ' /SWITCHERTESTID=' + $testInstallId
     $process = Start-Process -FilePath $setup -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     try { if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)." } }
     finally { $process.Dispose() }
@@ -43,7 +45,6 @@ function Assert-InstalledManifest {
     $manifestPath = Join-Path $installRoot 'SHA256.json'
     if (-not [IO.File]::Exists($manifestPath)) { throw 'Installed SHA256.json is missing.' }
     $manifest = @([IO.File]::ReadAllText($manifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json)
-    if ($manifest.Count -lt 100) { throw "Expected the .NET self-contained runtime payload; found $($manifest.Count) entries." }
     $seen = @{}
     foreach ($entry in $manifest) {
         $relative = ([string]$entry.path).Replace('/', '\')
@@ -55,21 +56,72 @@ function Assert-InstalledManifest {
         if (-not [IO.File]::Exists($path)) { throw "Installed payload is missing: $relative" }
         $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne [string]$entry.sha256) { throw "Installed payload hash does not match: $relative" }
+        if ($relative -match '(^|\\)[^\\]+\.resources\.dll$' -and $relative -notmatch '^zh-Hans\\[^\\]+\.resources\.dll$') {
+            throw "Unexpected satellite language in the Simplified Chinese payload: $relative"
+        }
     }
-    foreach ($required in @('CodexProfileSwitcher.exe', 'Switcher.Cli.exe', 'CodexProfileSwitcher.vbs', 'codex-switcher.cmd', 'README.md')) {
+    foreach ($required in @('CodexProfileSwitcher.exe', 'Switcher.Cli.exe', 'CodexProfileSwitcher.vbs', 'codex-switcher.cmd', 'README.md',
+        'hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll', 'clrjit.dll', 'System.Private.CoreLib.dll',
+        'PresentationFramework.dll', 'PresentationCore.dll', 'WindowsBase.dll', 'e_sqlite3.dll',
+        'zh-Hans\PresentationFramework.resources.dll')) {
         if (-not $seen.ContainsKey($required)) { throw "Required installed file is absent from manifest: $required" }
     }
 }
 
 function Invoke-IsolatedCli {
     $cli = Join-Path $installRoot 'Switcher.Cli.exe'
-    $output = @(& $cli status --json --codex-home $codexHome --data-dir $dataRoot 2>&1)
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) { throw "Installed CLI returned ${exitCode}: $($output -join ' ')" }
-    $result = ($output -join "`n") | ConvertFrom-Json
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $cli
+    $start.Arguments = 'status --json --codex-home ' + (Quote-WindowsArgument $codexHome) + ' --data-dir ' + (Quote-WindowsArgument $dataRoot)
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.EnvironmentVariables['CODEX_HOME'] = $codexHome
+    $start.EnvironmentVariables['DOTNET_ROOT'] = Join-Path $testRoot 'missing-dotnet-runtime'
+    $start.EnvironmentVariables['DOTNET_ROOT_X64'] = $start.EnvironmentVariables['DOTNET_ROOT']
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(15000)) { $process.Kill(); throw 'Installed CLI timed out.' }
+        $output = $stdout.GetAwaiter().GetResult()
+        $errorOutput = $stderr.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) { throw "Installed CLI returned $($process.ExitCode): $output $errorOutput" }
+        $result = $output | ConvertFrom-Json
+    }
+    finally { $process.Dispose() }
     if ([IO.Path]::GetFullPath($result.codex_home) -cne [IO.Path]::GetFullPath($codexHome)) { throw 'Installed CLI ignored the temporary CODEX_HOME.' }
     if ([IO.Path]::GetFullPath($result.data_directory) -cne [IO.Path]::GetFullPath($dataRoot)) { throw 'Installed CLI ignored the temporary data directory.' }
     if ([IO.File]::Exists((Join-Path $codexHome 'auth.json')) -or [IO.File]::Exists((Join-Path $codexHome 'config.toml'))) { throw 'CLI status unexpectedly created or changed live Codex files.' }
+}
+
+function Invoke-IsolatedGui {
+    $mockPath = Join-Path $testRoot 'mock-codex-must-not-be-called.exe'
+    [IO.File]::WriteAllText($mockPath, 'Synthetic sentinel; never execute a real Codex command.')
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = Join-Path $installRoot 'CodexProfileSwitcher.exe'
+    $start.Arguments = '--codex-home ' + (Quote-WindowsArgument $codexHome) + ' --data-dir ' + (Quote-WindowsArgument $dataRoot) + ' --codex-exe ' + (Quote-WindowsArgument $mockPath)
+    $start.UseShellExecute = $false
+    $start.EnvironmentVariables['CODEX_SWITCHER_DISABLE_UPDATE_CHECK'] = '1'
+    $start.EnvironmentVariables['CODEX_HOME'] = $codexHome
+    $start.EnvironmentVariables['DOTNET_ROOT'] = Join-Path $testRoot 'missing-dotnet-runtime'
+    $start.EnvironmentVariables['DOTNET_ROOT_X64'] = $start.EnvironmentVariables['DOTNET_ROOT']
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            if ($process.HasExited) { throw 'Installed WPF exited before displaying its window.' }
+            $process.Refresh()
+            if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -eq 'Codex 切换助手') { $ready = $true; break }
+            Start-Sleep -Milliseconds 200
+        }
+        if (-not $ready) { throw ('Installed WPF did not show its expected window: ' + $process.MainWindowTitle) }
+        if (-not $process.CloseMainWindow() -or -not $process.WaitForExit(5000)) { throw 'Installed WPF did not close normally.' }
+        if ($process.ExitCode -ne 0) { throw ('Installed WPF exited with code ' + $process.ExitCode) }
+        if ([IO.File]::Exists((Join-Path $codexHome 'auth.json')) -or [IO.File]::Exists((Join-Path $codexHome 'config.toml'))) { throw 'GUI startup unexpectedly wrote authentication or Codex configuration.' }
+    }
+    finally { if (-not $process.HasExited) { $process.Kill() }; $process.Dispose() }
 }
 
 try {
@@ -80,8 +132,10 @@ try {
     [IO.File]::WriteAllBytes($launcher, $launcherBytes)
     if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedLegacyHash) { throw 'The embedded legacy launcher fixture does not match the installer migration signature.' }
     Invoke-IsolatedInstall
+    if (-not (Test-Path -LiteralPath $testUninstallKey)) { throw 'The test installation did not use its own uninstall registration.' }
     Assert-InstalledManifest
     Invoke-IsolatedCli
+    Invoke-IsolatedGui
 
     $legacyBackup = $launcher + '.legacy-0.2.9.bak'
     $pointer = Join-Path $launcherRoot 'install-path.txt'
@@ -126,11 +180,12 @@ try {
     try { if ($process.ExitCode -ne 0) { throw "Uninstaller exited with code $($process.ExitCode)." } }
     finally { $process.Dispose() }
     $uninstalled = $true
+    if (Test-Path -LiteralPath $testUninstallKey) { throw 'The isolated uninstall registration was not removed.' }
     if (-not [IO.File]::Exists($retainedMarker)) { throw 'Uninstall removed the temporary app data marker.' }
     if (-not [IO.Directory]::Exists($codexHome)) { throw 'Uninstall removed the temporary CODEX_HOME.' }
     if (-not [IO.File]::Exists((Join-Path $launcherRoot 'CodexProfileSwitcher.vbs'))) { throw 'Uninstall removed the fixed launcher.' }
 
-    Write-Output 'Installer integration passed: checksum, isolated install, self-contained payload, CLI, fixed launcher, upgrade preservation, uninstall, and data retention.'
+    Write-Output 'Installer integration passed: checksum, isolated install, self-contained payload, CLI, WPF startup/close, fixed launcher, upgrade preservation, uninstall, and data retention.'
 }
 finally {
     if (-not $uninstalled -and [IO.File]::Exists($uninstaller)) {

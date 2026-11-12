@@ -158,11 +158,12 @@ public sealed class ProfileManagementService(IProfileRepository repository, IAut
         repository.Save(registry);
     }
 
-    public void UpdateSettings(ProfileKind kind, string selector, ProfileSettings settings)
+    public void UpdateSettings(ProfileKind kind, string selector, ProfileSettings settings, string? displayName = null)
     {
         var registry = repository.Load();
         var profile = registry.Find(kind, selector);
         profile.SetSettings(settings);
+        if (displayName is not null) profile.Name = RequiredName(displayName);
         profile.UpdatedUtc = DateTimeOffset.UtcNow.ToString("O");
         repository.Save(registry);
     }
@@ -189,13 +190,14 @@ public sealed class ProfileManagementService(IProfileRepository repository, IAut
         repository.Save(registry);
     }
 
-    public void EditApiProfile(string selector, ProfileSettings settings, string baseUrl, string catalogMode, string? catalogPath, string? sourceOfficialId, string? replacementApiKey)
+    public void EditApiProfile(string selector, ProfileSettings settings, string baseUrl, string catalogMode, string? catalogPath, string? sourceOfficialId, string? replacementApiKey, string? displayName = null)
     {
         var registry = repository.Load();
         var profile = (ApiProfile)registry.Find(ProfileKind.Api, selector);
         ProfileRegistry.ValidateRelayBaseUrl(baseUrl);
         if (catalogMode is not ("manual" or "official")) throw new ArgumentException("模型目录方式必须为 manual 或 official。", nameof(catalogMode));
         profile.BaseUrl = baseUrl.TrimEnd('/');
+        if (displayName is not null) profile.Name = RequiredName(displayName);
         profile.ModelCatalogMode = catalogMode;
         if (catalogPath is not null) profile.ModelCatalogJson = catalogPath;
         if (sourceOfficialId is not null) profile.ModelCatalogSourceOfficialId = sourceOfficialId;

@@ -27,7 +27,7 @@ public sealed class OperationHistoryStore(ISwitcherFileSystem files, SwitcherPat
     {
         if (string.IsNullOrWhiteSpace(message)) return;
         var entries = ReadEntries();
-        entries.Add(new PersistedEntry(DateTimeOffset.UtcNow, Sanitize(message)));
+        entries.Add(new PersistedEntry(DateTimeOffset.UtcNow, SanitizeMessage(message)));
         if (entries.Count > MaximumEntries) entries.RemoveRange(0, entries.Count - MaximumEntries);
         var contents = string.Join(Environment.NewLine, entries.Select(entry => JsonSerializer.Serialize(entry, JsonOptions))) + Environment.NewLine;
         files.WriteAtomic(paths.OperationLogFile, Utf8.GetBytes(contents));
@@ -50,7 +50,7 @@ public sealed class OperationHistoryStore(ISwitcherFileSystem files, SwitcherPat
         return entries.TakeLast(MaximumEntries).ToList();
     }
 
-    private static string Sanitize(string message)
+    public static string SanitizeMessage(string message)
     {
         var normalized = message.Replace('\r', ' ').Replace('\n', ' ');
         normalized = SecretAssignment.Replace(normalized, match => match.Groups[1].Value + "=[REDACTED]");

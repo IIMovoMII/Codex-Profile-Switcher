@@ -2,7 +2,10 @@ using Switcher.Core.Switching;
 
 namespace Switcher.Core.Updates;
 
-public sealed record UpdateInfo(string CurrentVersion, string LatestVersion, string ReleaseUrl, string? InstallerUrl, string? ChecksumUrl, bool IsNewer, string Message);
+public sealed record UpdateInfo(string CurrentVersion, string LatestVersion, string ReleaseUrl, string? InstallerUrl, string? ChecksumUrl, bool IsNewer, string Message)
+{
+    public string ReleaseNotes { get; init; } = "";
+}
 
 public interface IUpdateService
 {
