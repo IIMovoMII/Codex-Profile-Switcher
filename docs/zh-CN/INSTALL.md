@@ -1,75 +1,91 @@
 # 图形版使用说明
 
-当前版本：0.2.9，支持 Windows 10/11 64 位。
+当前源码版本：0.3.7，面向 Windows 10/11 x64。
 
-## 下载和安装
+本版是 C# / .NET 10 重构版，安装包见 [0.3.7 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.7)。0.2.x 安装包是旧版 PowerShell 程序。
 
-从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载最新的 **Codex-Profile-Switcher-Setup-版本.exe**。安装器默认安装到当前用户的 **%LOCALAPPDATA%\\Programs\\CodexProfileSwitcher**，不要求管理员权限。可选在桌面创建指向固定入口的快捷方式，也会创建开始菜单入口。固定入口保存在 **%LOCALAPPDATA%\\CodexProfileSwitcher\\Launcher**，后续更新不会覆盖入口文件。
+## 安装和固定入口
 
-安装不会登录账号、改 Codex 配置或启动 Desktop。卸载程序只移除切换器文件和快捷方式，保留账号档案、聊天、项目和备份。
+从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载 `Codex-Profile-Switcher-Setup-版本.exe`。安装和卸载向导均使用简体中文。安装器默认写入当前用户的 `%LOCALAPPDATA%\Programs\CodexProfileSwitcher`，不需要管理员权限。开始菜单入口固定创建；桌面快捷方式可在安装时选择。
 
-需要 PowerShell 5.1、Windows Presentation Foundation 和 Windows Script Host。图形界面不要求 Node.js、Python 或外部 SQLite。
+快捷方式始终指向 `%LOCALAPPDATA%\CodexProfileSwitcher\Launcher\CodexProfileSwitcher.vbs`。后续升级只更新该目录中的 `install-path.txt`，保持固定入口和快捷方式目标稳定。已知的 0.2.9 和 0.3.6 旧启动器会先备份再迁移；入口支持中文路径和源码目录中的发布路径指针。已知旧版 PowerShell 业务文件仅在 SHA-256 完全匹配时清理。修改过或无法识别的文件会保留并给出提示。
+
+安装包自带 .NET 10 运行时。用户运行不需要 PowerShell、.NET SDK、Python、Node.js 或单独安装 SQLite。安装和卸载不登录账号，不改 Codex 配置；卸载不会删除 `%LOCALAPPDATA%\CodexProfileSwitcher`、`CODEX_HOME` 或聊天项目。
 
 ## 第一次使用
 
 1. 完全退出 Codex Desktop 和 Codex CLI。
-2. 已登录的用户点击“导入当前账号”；新用户点击“添加账号”。
-3. 选择官方 ChatGPT OAuth 或自定义 API。官方账号在浏览器登录，API 需要接口地址和 Key。
+2. 已有当前认证时选择“导入当前账号”；也可以添加官方账号或 API 档案。
+3. 添加官方账号会启动 Codex 原生登录流程；API 档案需要名称、HTTPS 接口地址和 API Key。
+4. 保存档案后选择目标账号并切换。切换结束后完全退出并重新启动 Codex Desktop。
 
-切换器始终沿用已有的 **CODEX_HOME**。登录凭据和界面快照分别保存；聊天、项目和工作目录不会按账号复制。
+切换器继续使用当前 `CODEX_HOME`，默认是 `%USERPROFILE%\.codex`。认证和 `config.toml` 随当前账号切换，聊天与项目共享。运行数据和备份放在 `%LOCALAPPDATA%\CodexProfileSwitcher`。
 
-## 管理账号
+## 账号和配置
 
-账号卡片用于切换连接。API 账号卡片上的“模型设置”可直接打开模型、目录及其他账号配置；右侧菜单可编辑完整配置、重新登录官方账号或移除本地档案。
+“账号”页用于导入、添加、切换、重新应用、重命名和删除档案。删除档案会同时删除它保存的加密凭据，操作前会要求确认。官方账号可重新授权；API 档案在“设置”中编辑连接和 Key。
 
-模型、上下文窗口和系统代理在添加账号或“编辑名称与配置”中按账号设置。保存后在下次切换或“重新应用”时生效。留空模型或上下文会保留 Codex 当前值。编辑当前 API 的地址或 Key 后，需要重新应用才会更新当前连接。
+模型、上下文窗口和代理策略可以分别选择继承全局设置、保留当前 Codex 值或显式指定。账号配置只修改对应字段；TOML 中的注释、未知设置和个人偏好会保留。切换期间不会自动重置推理强度、模型上下文或聊天数据。
 
-系统代理的“不跟随”只控制 Codex 是否读取 Windows 的系统代理设置，不保证绕过 TUN 等其他流量接管方式。切换器不会修改 Windows 代理地址或开关。
-
-![系统代理说明](../images/proxy-help.png)
-
-切换前应退出 Codex Desktop 和 CLI。工具会检查相关进程；不会强行终止你的工作。
+切换前应退出 Codex Desktop 和 Codex CLI。切换器会检查运行中的相关进程，不会强行结束它们。若认证或配置写入失败，事务会尝试恢复已修改文件；检测到外部并发修改时会保留恢复材料并拒绝覆盖。
 
 ## 模型目录保持
 
-官方账号始终使用 Codex Desktop 原生模型更新。切回官方账号时会移除切换器使用的顶层 **model_catalog_json** 覆盖，不执行 CLI 的模型查询，不写原生 **models_cache.json**，也不固定任何模型名单。
+官方账号继续由 Codex 原生更新模型目录。切换器不会为官方模式设置 `model_catalog_json` 覆盖，不通过 CLI 生成模型列表，也不修改原生 `models_cache.json`。
 
-在 API 账号的“编辑名称与配置”中选择维护方式：
+API 档案的“模型目录”设置支持两种方式：
 
-| 维护方式 | 目录来源 | 更新方式 |
+| 方式 | 使用的文件 | 维护方式 |
 | --- | --- | --- |
-| 手动维护目录（原有账号的默认方式） | 此账号指定的 JSON；留空使用 **%LOCALAPPDATA%\CodexProfileSwitcher\relay-models.json** | 自行编辑，或“选择 JSON…”引用从可信 Codex 安装导出的完整目录 |
-| 跟随官方目录 | 所选官方账号的独立快照 **%LOCALAPPDATA%\CodexProfileSwitcher\model-catalogs\official-账号摘要.json** | 正常离开该官方账号、切换认证之前，从本地官方缓存同步 |
+| 手动维护目录 | 此 API 档案指定的 JSON 文件；未指定时使用 `%LOCALAPPDATA%\CodexProfileSwitcher\relay-models.json` | 用户自行编辑，或选择可信 Codex 安装导出的完整目录 |
+| 跟随官方目录 | 此 API 档案所选官方账号的独立快照 | 离开该官方账号前，从本地缓存核验来源并同步 |
 
-每个 API 账号可选择不同来源或手动文件。改为跟随后仍保留原手动路径；切回手动方式即可继续使用。自动快照与手动文件分开保存，同步不会覆盖 **relay-models.json** 或用户指定的手动目录。
+每个 API 档案可选择不同官方来源或不同手动文件。自动快照和手动文件分开保存；启用跟随方式不会覆盖原手动路径。设置页显示维护方式、实际路径、来源和更新时间，并提供打开文件/文件夹操作。
 
-同步只读取切换脚本实际解析的 **CODEX_HOME\models_cache.json**，默认是 **%USERPROFILE%\.codex\models_cache.json**。核对当前官方身份与缓存的原生来源摘要相符后，保存完整的 **models** 数组，包括展示名称、上下文、推理档位、能力和未知字段；不导出账号等缓存外层数据。每个官方账号有独立快照与来源记录。
+同步只读取 `CODEX_HOME\models_cache.json`。只有当前官方认证和缓存来源能对应时才读取完整 `models` 数组；模型项中的展示名称、上下文、推理档位、能力及未知字段都会保留，缓存外层的账号身份信息不会写入目录。每个官方账号使用独立快照。
 
-缓存缺失、损坏、为空或来源无法确认时，仅显示简短结果并保留旧快照，账号切换继续。尚未配置有效目录时同样允许切换，并提示模型列表可能不完整。高级 **config-api / config-official** 快速入口不执行目录同步，只使用已经保存的目录。
+缓存不存在、来源不明、内容损坏或目录为空时，保留上一次有效快照并继续切换。没有官方账号时也可长期维护手动目录，不要求登录官方。目录尚未配置时允许切换，并提示模型列表可能不完整。快速切换入口继续跳过历史检查和模型同步，只使用已有目录。
 
-设置区显示维护方式、实际路径、来源及更新时间，提供“打开模型目录文件”和“打开所在文件夹”。首次打开尚不存在的手动文件时会创建空的编辑骨架；请从完整 Codex 目录填入模型信息。没有官方账号时无需登录官方，已有手动目录可以长期使用和编辑。导入文件顶层应含 **models** 数组，数组中每项保留完整 Codex 模型对象；不能仅填写模型名称或使用普通 **/v1/models** 响应替代。
+API 模型目录必须采用完整 Codex 目录 JSON 格式，顶层含 `models` 数组，数组项是完整模型对象；不能只写模型名称，也不能把普通 `/v1/models` 响应直接当成 Codex 目录。修改目录后完全退出并重启 Codex 生效。目录显示某模型不代表 API 服务端支持调用该模型。
 
-目录修改或切换后，完全退出并重新启动 Codex 生效。目录中出现模型不代表 API 中转站已经支持调用。此功能只处理目录来源、独立快照和配置引用；现有账号对模型、上下文、推理强度及代理的设置仍按原流程保留或应用。
+## 环境、历史与项目
+
+“环境与更新”页可检查 Codex 命令，执行聊天兼容准备或完整扫描，检查/修复项目归属，并查看进度与本次操作结果。项目检查默认不按当前工作目录猜测归属；显式启用目录推断时才会根据本地项目路径进行匹配。历史准备和后续账号切换分别执行；若后续切换失败，已经完成的历史整理和其备份仍保留。
+
+修复功能会创建本地备份。发现不支持的数据库结构、无法确认的数据归属或并发修改时，切换器会跳过可选修复或停止写入，不自动覆盖未知数据。
 
 ## 更新
 
-每次打开图形界面时，切换器会在隐藏后台请求 GitHub 最新稳定版信息，最长等待 8 秒，不阻塞窗口。右上角“检查更新”始终可见，也可随时手动重试；检查失败或当前已是最新版本时，界面会显示简短状态。账号功能不受更新检查结果影响。
+每次打开图形界面时，切换器会在后台检查 GitHub 最新稳定版。也可在“环境与更新”页手动检查。检查失败不会阻止已有账号管理和切换。
 
-点击更新后，切换器先询问，再从该项目的 GitHub Release 下载安装包和 SHA-256 文件。校验通过后启动 Inno Setup 安装程序。安装器保留现有 **%LOCALAPPDATA%\\CodexProfileSwitcher** 与 **CODEX_HOME**。切换器不静默下载或安装更新。
+下载更新前会询问确认。程序只接受项目 GitHub Release 中的 HTTPS 安装包和 SHA-256 清单；安装包核验通过后再次确认，才启动安装器。更新不会静默安装。
 
-更新来源为[公开 GitHub 仓库](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases)。源码版开发启动（使用 NoShow 测试模式）不执行网络检查。
+## 命令行
 
-## 数据与安全
+安装目录中的 `codex-switcher.cmd` 调用同目录 `Switcher.Cli.exe`。常用命令：
 
-- 聊天、项目、config.toml、auth.json 和 API Key 不发送给更新服务。
-- 更新检查请求只访问 GitHub Releases API；下载也只接受本项目 GitHub Release 的 HTTPS 资源。
-- 安装包 SHA-256 必须与同一 Release 附件一致，否则文件会被丢弃，不会运行。
-- 本地档案和备份位于 **%LOCALAPPDATA%\\CodexProfileSwitcher**，由当前 Windows 用户的 DPAPI 保护。复制到另一用户或电脑不能恢复加密凭据。
-- 当前生效的 auth.json 仍由 Codex 本身按文件认证机制维护。
-- 排查问题时只上传必要日志，并先删除邮箱、用户路径、账号 ID、令牌、API 地址、聊天内容和项目名称。
+```text
+codex-switcher.cmd status [--json]
+codex-switcher.cmd profiles [--json]
+codex-switcher.cmd switch --kind api|official [--profile ID] [--quick]
+codex-switcher.cmd profile-add-api --name NAME --base-url HTTPS_URL [--catalog PATH]
+codex-switcher.cmd profile-add-official --name NAME
+codex-switcher.cmd profile-rename --kind api|official --profile ID --name NAME
+codex-switcher.cmd profile-update --kind api --profile ID [--base-url URL] [--catalog PATH]
+codex-switcher.cmd profile-reauth --kind api|official --profile ID
+codex-switcher.cmd profile-remove --kind api|official --profile ID
+codex-switcher.cmd history-scan | history-prepare
+codex-switcher.cmd project-scan | project-repair
+codex-switcher.cmd desktop-scan | desktop-repair
+```
 
-## 验证边界
+使用 `--codex-home PATH` 和 `--data-dir PATH` 可为隔离验证指定临时目录。添加 API 时 Key 从不回显的交互输入或标准输入读取；命令错误和日志不会输出凭据。官方登录命令只应由用户主动执行。
 
-自动化隔离测试使用临时目录、模拟 CLI 和测试 OAuth 数据。它们不能替代真实账号登录、真实 API 请求或跨机器验证。本项目依赖 Codex Desktop 的本地数据结构；客户端重大升级后，应等待兼容版本，不要手动恢复未知旧备份。
+## 数据和安全
 
-切换器用于管理本机连接，不改变 ChatGPT 或 API 服务端账号权限、套餐、额度或账单。
+- 档案凭据及恢复记录使用当前 Windows 用户 DPAPI；不能直接搬到另一 Windows 用户或电脑。
+- 程序不会上传聊天、项目、认证内容或 API Key。更新检查只访问 GitHub Releases。
+- 安装和卸载不清理 `CODEX_HOME` 或切换器数据目录。
+- 若需反馈问题，上传日志前请删除邮箱、账号 ID、用户路径、API 地址、令牌、聊天内容和项目名称。
+
+隔离测试使用临时目录、合成认证数据和模拟 CLI，不等于真实账号登录、真实 API 调用或跨机器验证。维护者不会把真实账号试用作为自动验收步骤。

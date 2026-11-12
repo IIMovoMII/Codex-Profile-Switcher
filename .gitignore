@@ -23,3 +23,8 @@ HANDOFF.zh-CN.md
 
 # Inno Setup intermediates.
 *.iss.bak
+
+# Local .NET build and release artifacts.
+/artifacts/
+**/bin/
+**/obj/

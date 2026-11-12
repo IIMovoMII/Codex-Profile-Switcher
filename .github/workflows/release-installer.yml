@@ -25,6 +25,20 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release tag: $env:RELEASE_TAG" }
           if ((Get-Content -Raw version.txt).Trim() -ne $version) { throw "Release tag and version.txt differ." }
 
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          dotnet build .\CodexProfileSwitcher.sln
+          if ($LASTEXITCODE -ne 0) { throw 'Solution build failed.' }
+          dotnet test .\CodexProfileSwitcher.sln --no-build
+          if ($LASTEXITCODE -ne 0) { throw 'Solution tests failed.' }
+          .\tests\test-launcher.ps1
+
       - name: Install Inno Setup
         run: winget install --id JRSoftware.InnoSetup --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
 
@@ -34,9 +48,16 @@ jobs:
           .\build-installer.ps1 -OutputDirectory .\dist
           Get-ChildItem .\dist | Get-FileHash -Algorithm SHA256
 
+      - name: Validate isolated installation
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw version.txt).Trim()
+          .\tests\test-installer.ps1 -SetupPath ".\dist\Codex-Profile-Switcher-Setup-$version.exe"
+
       - name: Attach installer and checksum
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name }}
+          overwrite_files: false
           files: |
             dist/*

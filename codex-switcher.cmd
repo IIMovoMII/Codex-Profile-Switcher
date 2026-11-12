@@ -1,19 +1,14 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
-for /f "tokens=2 delims=:" %%C in ('chcp') do set "_CODEX_OLD_CP=%%C"
-set "_CODEX_OLD_CP=!_CODEX_OLD_CP: =!"
-chcp 65001 >nul
-where pwsh.exe >nul 2>nul
-if !errorlevel! equ 0 (
-  pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0codex-profile-switcher.ps1" %*
+setlocal EnableExtensions
+if not exist "%~dp0Switcher.Cli.exe" (
+  echo Switcher.Cli.exe was not found. Run the installer or publish the solution.
+  set "_CODEX_SWITCH_EXIT=2"
 ) else (
-  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0codex-profile-switcher.ps1" %*
+  "%~dp0Switcher.Cli.exe" %*
+  set "_CODEX_SWITCH_EXIT=%ERRORLEVEL%"
 )
-set "_CODEX_SWITCH_EXIT=!errorlevel!"
 if not "%CODEX_SWITCHER_NO_PAUSE%"=="1" (
   echo.
-  echo 按任意键退出 . . .
-  pause >nul
+  pause
 )
-if defined _CODEX_OLD_CP chcp !_CODEX_OLD_CP! >nul
-exit /b !_CODEX_SWITCH_EXIT!
+exit /b %_CODEX_SWITCH_EXIT%
