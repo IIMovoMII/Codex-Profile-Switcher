@@ -4,7 +4,7 @@
 
 - 基线为 `9b48383`，开始时工作区干净。保留已有业务、数据格式、固定入口及全部有效功能，不改写 Git 历史。
 - 已将 35 个旧 PowerShell 实现/旧对照材料、闲置 XAML、两张过时截图及旧 Python 启动器测试移出源码树；本机归档逐文件校验，未提交归档。历史实现仍可通过旧标签查阅。
-- 当前 PowerShell 只用于构建、发布白名单、隔离预览、入口及安装验证。保留的 C# 测试没有删除；旧启动器测试的有效检查接入当前 EXE 测试。
+- 当前仅保留 6 个 PowerShell 开发脚本：`build-installer.ps1` 与 `distribution-files.ps1` 负责打包和白名单，`tests/start-frontend-preview.ps1` 负责隔离预览，`test-launcher.ps1`、`test-installer.ps1`、`test-legacy-installer-upgrade.ps1` 验证入口、安装和旧版升级。保留的 C# 测试没有删除；旧启动器测试的有效检查接入当前 EXE 测试。
 - 更新 Microsoft.Data.Sqlite 10.0.15，解析到 SQLitePCLRaw 2.1.13；直接与传递依赖审计未发现已知漏洞。NU1901–NU1904 作为构建错误，新增实际加载原生 SQLite >= 3.50.2 的回归，覆盖 GHSA-2m69-gcr7-jv3q。
 - 三个 CI Action 升级到 Node 24，并固定已核验版本的完整提交 SHA；保留构建、行为回归、WSH/CMD、公告一致、打包和隔离安装步骤。
 - 入口测试发现 CMD 在括号内提前展开 ERRORLEVEL，会把失败报告为成功；已改为分支标签，关闭延迟展开，保留参数、单次按键等待和退出码。真实 CMD 的 9 个 EXE 探针用例及 WSH 中文路径/参数/编码用例通过。
