@@ -26,7 +26,7 @@
 | 位置记录 | `%APPDATA%\CodexProfileSwitcher\locations.json` | 被占用或无权读取时提示不可读取，保留原件，不误当首次安装 |
 | 手动模型目录 | 账号指定路径优先；其次 `RelayModelCatalogPath` / `--relay-model-catalog-path`；再使用数据目录的 `relay-models.json` | `LegacyLocationCompatibilityTests`、`FrontendBehaviorTests`；显示实际路径，读取失败与未配置分开，不改写手动文件 |
 | 官方模型缓存与快照 | 仅实际 CODEX_HOME 的 `models_cache.json`；按官方账号写数据目录 `model-catalogs` 下独立快照 | 只读缓存、核验身份来源、完整字段保留；不跨账号或跨 CODEX_HOME 猜测缓存位置，无效来源保留旧快照 |
-| 历史数据库 | CODEX_HOME 及 `sqlite` 子目录的 `*.sqlite`，识别 threads/thread_items/thread_turns/thread_history_projection_state 表 | `HistoryCompatibilityBehaviorTests`；不依赖单一库名，不把分页库漏算；需同步改写但格式未适配时先停止写入 |
+| 历史数据库 | CODEX_HOME 及 `sqlite` 子目录的 `*.sqlite`，识别 threads/thread_items/thread_turns/thread_history_projection_state 表 | `HistoryCompatibilityBehaviorTests`、`PaginatedHistoryBehaviorTests`；不依赖单一库名；已核验的原生分页同步游标、轮次偏移和本地父段边界，未知结构先停止写入；增量指纹包含 WAL |
 | 项目数据库 | 当前适配 CODEX_HOME 下 `state_5.sqlite` | `ProjectProjectionBehaviorTests`；发现 `state_*.sqlite` 其他版本会说明格式未适配，不冒充文件缺失，不猜测写入 |
 | Desktop 状态 | CODEX_HOME 的 `.codex-global-state.json` 及数据目录的 `desktop-renderer-state.dpapi` | 已有适配器、账号私有/共享状态测试；未知结构保留，凭据解密继续使用原 CODEX_HOME 熵参数 |
 | 独立助手维护标记 | `MonitorDataDir` / `--monitor-data-dir`；默认数据目录旁的 `CodexDesktopWeixin` 仅在已有 settings.json 时启用 | 只写已有维护协议的 maintenance.json，不加载其他项目源码；自定义数据目录需用显式参数协调不相邻的安装 |
@@ -34,6 +34,14 @@
 | 切换器入口 | 固定 VBS、install-path.txt 和正式发布输出 | 真实 WSH/CMD、隔离安装验证；不是递归搜索同名 EXE，已修改启动器保留并提示 |
 
 账号、聊天、目录、配置和数据库属于不同格式，分别由对应模块负责；不会用“全盘找一个同名文件”替代身份和来源核验。
+
+## 0.3.13 的分页阻断与 0.3.14 适配
+
+0.3.13 恢复了分页库的发现，但尚未实现 JSONL 改写后的投影偏移同步，因此会明确报“已发现但格式尚未适配”并停止普通切换。文件存在、位置正确，这与找不到 CLI 是两处不同的迁移遗漏。
+
+0.3.14 将格式知识集中到字节日志与 SQLite 投影适配模块：记录每行改写前后的 UTF-8 边界，同步游标、轮次偏移及本地父段继承偏移。原生界面 ID、item_json、文字、ordinal 和未知列保留；模型输入标识只在界面来源核验通过后按原规则处理。物理文件名含逻辑 UUID 与分段 UUID 时，分别关联会话元数据和分页投影；多个物理文件指向同一投影、继承循环或未知偏移字段会在写入前停止。
+
+同类回归还覆盖了中文字节索引、空白/BOM/混合换行、文件总长度不变但中间偏移已变、旧轮次表可选列以及 WAL 单独提交。恢复记录使用版本 3，仍能读取既有 C# 版本 2 记录；恢复先核对所有来源，有外部编辑就保留材料并停止，避免先回退某个库再发现另一处被修改。新版完成备份继续按既有保留限额处理。
 
 ## 防止同类回归
 

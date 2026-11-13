@@ -76,7 +76,7 @@ public sealed class StorageMaintenanceService(SwitcherPaths paths, IOperationLoc
                 if (!node.TryGetProperty("version", out var version) || !version.TryGetInt32(out var number)) continue;
                 var legacy = history && !node.TryGetProperty("codexHome", out _);
                 if (legacy && (number is < 1 or > 3 || references.Unknown)) continue;
-                if (!legacy && number != (history ? 2 : 1)) continue;
+                if (!legacy && !(history ? number is 2 or 3 : number == 1)) continue;
                 if (!node.TryGetProperty(history && !legacy ? "codexHome" : "codex_home", out var home) ||
                     !string.Equals(home.GetString(), paths.CodexHome, StringComparison.OrdinalIgnoreCase)) continue;
                 if (!node.TryGetProperty("status", out var state) || state.GetString() is not ("complete" or "rolled_back" or "rolled-back" or "failed")) continue;

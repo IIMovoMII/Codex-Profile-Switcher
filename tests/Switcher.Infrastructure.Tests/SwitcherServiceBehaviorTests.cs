@@ -13,11 +13,46 @@ using Switcher.Infrastructure.Profiles;
 using Switcher.Infrastructure.Security;
 using Switcher.Infrastructure.Switching;
 using Switcher.Infrastructure.Processes;
+using Switcher.Infrastructure.History;
 
 namespace Switcher.Infrastructure.Tests;
 
 public sealed class SwitcherServiceBehaviorTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Normal_switch_uses_native_paginated_history_and_keeps_its_committed_result_if_authentication_fails(bool officialToApi, bool failAuthentication)
+    {
+        using var history = new PaginatedHistoryBehaviorTests.Fixture();
+        using var fixture = new Fixture(history.Paths, actualHistory: true);
+        var officialAuth = CreateOfficialAuth("synthetic-paged-switch");
+        var official = fixture.Management.ImportOfficial("Synthetic official", officialAuth);
+        var api = fixture.Management.AddApi(new("Synthetic API", "https://synthetic.example.invalid/v1", "synthetic-key"));
+        fixture.Files.WriteAtomic(fixture.Paths.AuthFile, Encoding.UTF8.GetBytes(officialToApi ? officialAuth : "{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"synthetic-key\"}"));
+        fixture.Files.WriteAtomic(fixture.Paths.ConfigFile, Encoding.UTF8.GetBytes(officialToApi
+            ? "model_provider = \"openai\"\nmodel = \"personal-model\"\n# keep preference\n"
+            : "model_provider = \"openai\"\nopenai_base_url = \"https://synthetic.example.invalid/v1\"\nmodel = \"personal-model\"\n# keep preference\n"));
+        var auth = fixture.Files.ReadAllBytes(fixture.Paths.AuthFile); var config = fixture.Files.ReadAllBytes(fixture.Paths.ConfigFile);
+        var ui = history.UiSnapshot(); fixture.Runtime.FailVerification = failAuthentication;
+        var targetKind = officialToApi ? ProfileKind.Api : ProfileKind.Official; var targetId = officialToApi ? api.Id : official.Id;
+        if (failAuthentication)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SwitchAsync(targetKind, targetId));
+            Assert.Equal(auth, fixture.Files.ReadAllBytes(fixture.Paths.AuthFile)); Assert.Equal(config, fixture.Files.ReadAllBytes(fixture.Paths.ConfigFile));
+        }
+        else
+        {
+            var result = await fixture.Service.SwitchAsync(targetKind, targetId);
+            Assert.Equal(targetId, result.TargetProfileId); Assert.True(result.History!.Changed);
+            Assert.Contains("personal-model", fixture.Files.ReadAllText(fixture.Paths.ConfigFile)); Assert.Contains("# keep preference", fixture.Files.ReadAllText(fixture.Paths.ConfigFile));
+        }
+        Assert.Equal(ui, history.UiSnapshot());
+        Assert.Equal(File.ReadAllBytes(history.Journal).LongLength, history.Number("SELECT next_rollout_byte_offset FROM thread_history_projection_state WHERE thread_id='synthetic-thread'"));
+        Assert.Equal("complete", System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(history.Manifest()))!["status"]!.GetValue<string>());
+    }
+
     [Fact]
     public async Task Api_to_official_switch_removes_api_catalog_and_keeps_unrelated_preferences()
     {
@@ -259,11 +294,11 @@ public sealed class SwitcherServiceBehaviorTests
     private sealed class Fixture : IDisposable
     {
         private readonly TestProtector _protector = new();
-        public Fixture()
+        public Fixture(SwitcherPaths? overridePaths = null, bool actualHistory = false)
         {
             Root = Path.Combine(Path.GetTempPath(), "codex-switch-service-test-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Root);
-            Paths = SwitcherPaths.FromEnvironment(Path.Combine(Root, "codex home"), Path.Combine(Root, "switcher data"));
+            Paths = overridePaths ?? SwitcherPaths.FromEnvironment(Path.Combine(Root, "codex home"), Path.Combine(Root, "switcher data"));
             Files = new PhysicalSwitcherFileSystem();
             Registry = new ProfileRegistryStore(Files, Paths, _protector);
             var vault = new CredentialVault(Files, _protector, Registry, Paths);
@@ -274,7 +309,7 @@ public sealed class SwitcherServiceBehaviorTests
             Catalogs = new TestCatalogProvider(Paths);
             Runtime = new TestCodexRuntime(Files, Paths);
             var projects = new TestProjects();
-            var history = new TestHistory();
+            IHistoryCompatibilityService history = actualHistory ? new HistoryCompatibilityService(Files, Paths) : new TestHistory();
             Service = new SwitcherService(Paths, Files, new TestLock(), executor, Profiles, new CodexAuthClassifier(), Management,
                 Config, Runtime, new EmptyDesktopStatePlanner(), Catalogs, projects, history);
         }

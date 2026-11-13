@@ -14,9 +14,9 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
 {
     private sealed record FilePlan(string Path, byte[] Original, byte[] Target);
     private sealed record ProviderRow(string ThreadId, string OldProvider);
-    private sealed record DatabasePlan(string Path, IReadOnlyList<ProviderRow> Rows, string BackupPath);
+    private sealed record DatabasePlan(string Path, IReadOnlyList<ProviderRow> Rows, string BackupPath, HistoryDbPlan Projection);
     private sealed record PreparedFile(string Source, string Backup, string OriginalSha256, string TargetSha256);
-    private sealed record PreparedDatabase(string Source, string Backup, IReadOnlyList<ProviderRow> Rows);
+    private sealed record PreparedDatabase(string Source, string Backup, IReadOnlyList<ProviderRow> Rows, HistoryDbPlan? Projection = null);
     private sealed record PreparedManifest(int Version, string CodexHome, string Status, IReadOnlyList<PreparedFile> Files, IReadOnlyList<PreparedDatabase> Databases);
     private sealed record ReadyStamp(int Version, string CodexHome, string Fingerprint, int FileCount, int DatabaseCount);
     private static readonly Regex ProviderName = new("^[A-Za-z0-9._-]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -37,6 +37,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
         var backupRoot = paths.HistoryBackupsDirectory;
         var backupDirectory = Path.Combine(backupRoot, DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "-" + Guid.NewGuid().ToString("N"));
         var filePlans = new List<FilePlan>();
+        var journals = new List<HistoryJournal>();
         var threadIds = new HashSet<string>(StringComparer.Ordinal);
         var index = 0;
         foreach (var path in rolloutFiles)
@@ -45,31 +46,27 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             progress?.Report(new SwitchProgress("历史扫描", $"正在检查 {Path.GetFileName(path)}。", rolloutFiles.Length == 0 ? 45 : 10 + index * 40 / rolloutFiles.Length));
             var original = files.ReadAllBytes(path);
             var target = RewriteJsonl(path, original, threadIds);
-            if (!original.AsSpan().SequenceEqual(target)) filePlans.Add(new FilePlan(path, original, target));
+            journals.Add(new HistoryJournal(path, original, target));
             index++;
         }
+        HistoryJournal.UpdateParentBoundaries(journals);
+        filePlans.AddRange(journals.Where(journal => journal.Changed).Select(journal => new FilePlan(journal.Path, journal.Original, journal.Target)));
 
         var dbPlans = new List<DatabasePlan>();
-        if (filePlans.Count > 0)
-        {
-            foreach (var database in databasePaths)
-            {
-                using var connection = OpenReadOnly(database);
-                using var schema = connection.CreateCommand();
-                schema.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('thread_items','thread_turns','thread_history_projection_state')";
-                if (Convert.ToInt32(schema.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) > 0)
-                    throw new InvalidDataException("已发现分页历史投影数据库。当前改写需要同步其 JSONL 字节偏移，但此格式尚未适配；为保护聊天，已在写入前停止历史准备，未把数据库当成缺失文件。");
-            }
-        }
         foreach (var database in databasePaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new SwitchProgress("历史数据库", $"正在检查 {Path.GetFileName(database)}。", 55));
             var rows = ReadRelatedProviderRows(database, threadIds);
-            if (rows.Count == 0) continue;
+            using var connection = OpenReadOnly(database);
+            var projection = PaginatedHistoryAdapter.Build(connection, journals, rows.Select(row => (row.ThreadId, row.OldProvider)).ToArray());
+            if (projection is null) continue;
             var backupPath = Path.Combine(backupDirectory, $"db-{dbPlans.Count:D4}-{Path.GetFileName(database)}.bak");
-            dbPlans.Add(new DatabasePlan(database, rows, backupPath));
+            dbPlans.Add(new DatabasePlan(database, rows, backupPath, projection));
         }
+        foreach (var journal in journals.Where(journal => journal.Paginated && journal.Changed))
+            if (!dbPlans.Any(plan => plan.Projection.ProjectionIds.Contains(journal.ProjectionId)))
+                throw new InvalidDataException("分页历史对应的本地投影游标尚未找到；已保留历史，未执行写入。");
 
         if (filePlans.Count == 0 && dbPlans.Count == 0)
         {
@@ -95,9 +92,12 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
                 BackupDatabase(database.Path, database.BackupPath);
             }
             manifestPath = Path.Combine(backupDirectory, "manifest.json");
-            preparedManifest = new PreparedManifest(2, paths.CodexHome, "prepared", preparedFiles,
-                dbPlans.Select(db => new PreparedDatabase(db.Path, db.BackupPath, db.Rows)).ToArray());
+            preparedManifest = new PreparedManifest(3, paths.CodexHome, "prepared", preparedFiles,
+                dbPlans.Select(db => new PreparedDatabase(db.Path, db.BackupPath, db.Rows, db.Projection)).ToArray());
             WriteManifest(manifestPath, preparedManifest);
+
+            // Check all sources before the first mutation, including SQLite values in WAL.
+            _ = AllChangesApplied(preparedManifest);
 
             foreach (var plan in filePlans)
             {
@@ -116,15 +116,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
                     QuickCheck(connection);
                     var transaction = connection.BeginTransaction(deferred: false);
                     databaseTransactions.Add((database, connection, transaction));
-                    foreach (var row in database.Rows)
-                    {
-                        using var update = connection.CreateCommand(); update.Transaction = transaction;
-                        update.CommandText = "UPDATE threads SET model_provider = $target WHERE id = $id AND model_provider = $source";
-                        update.Parameters.AddWithValue("$target", "openai");
-                        update.Parameters.AddWithValue("$id", row.ThreadId);
-                        update.Parameters.AddWithValue("$source", row.OldProvider);
-                        if (update.ExecuteNonQuery() != 1) throw new IOException($"SQLite provider 行在计划后发生变化：{Path.GetFileName(database.Path)}");
-                    }
+                    PaginatedHistoryAdapter.Apply(connection, transaction, database.Projection, restore: false);
                     VerifyProviderRows(connection, transaction, database.Rows, "openai");
                     QuickCheck(connection, transaction);
                 }
@@ -141,7 +133,12 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
 
             foreach (var plan in filePlans)
                 if (!Hash(files.ReadAllBytes(plan.Path)).Equals(Hash(plan.Target), StringComparison.Ordinal)) throw new IOException($"对话历史复查失败：{Path.GetFileName(plan.Path)}");
-            foreach (var database in dbPlans) VerifyDatabase(database.Path, database.Rows, "openai");
+            foreach (var database in dbPlans)
+            {
+                VerifyDatabase(database.Path, database.Rows, "openai");
+                using var verify = OpenReadOnly(database.Path);
+                if (!PaginatedHistoryAdapter.IsApplied(verify, database.Projection)) throw new IOException("分页历史写后校验失败。");
+            }
             var finalFingerprint = Fingerprint(rolloutFiles.Concat(databasePaths));
             WriteReady(readyPath, finalFingerprint, rolloutFiles.Length, databasePaths.Length);
             WriteManifest(manifestPath, preparedManifest with { Status = "complete" });
@@ -239,7 +236,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
 
     private void ValidateManifest(string manifestPath, PreparedManifest manifest)
     {
-        if (manifest.Version != 2 || !string.Equals(manifest.CodexHome, paths.CodexHome, StringComparison.OrdinalIgnoreCase))
+        if (manifest.Version is not (2 or 3) || !string.Equals(manifest.CodexHome, paths.CodexHome, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("历史恢复清单版本或 CODEX_HOME 不匹配；已保留恢复材料。");
         EnsurePathWithin(manifestPath, paths.HistoryBackupsDirectory, "恢复清单");
         if (manifest.Files is null || manifest.Databases is null) throw new InvalidDataException("历史恢复清单缺少文件计划。");
@@ -256,6 +253,8 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             EnsurePathWithin(item.Backup, paths.HistoryBackupsDirectory, "SQLite 备份");
             if (item.Rows is null || item.Rows.Any(row => string.IsNullOrWhiteSpace(row.ThreadId) || !ProviderName.IsMatch(row.OldProvider) || row.OldProvider == "openai"))
                 throw new InvalidDataException("历史恢复清单中的 SQLite 行计划无效。");
+            if (manifest.Version == 3 && item.Projection is null) throw new InvalidDataException("历史恢复清单缺少数据库投影计划。");
+            if (item.Projection is not null) PaginatedHistoryAdapter.ValidatePlan(item.Projection);
         }
     }
 
@@ -273,6 +272,12 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
         foreach (var item in manifest.Databases)
         {
             ValidateDatabaseBackup(item);
+            if (item.Projection is not null)
+            {
+                using var connection = OpenReadOnly(item.Source);
+                if (!PaginatedHistoryAdapter.IsApplied(connection, item.Projection)) allApplied = false;
+                continue;
+            }
             foreach (var row in item.Rows)
             {
                 var current = ReadProviderValue(item.Source, row.ThreadId);
@@ -285,12 +290,19 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
 
     private void RollbackPreparedChanges(PreparedManifest manifest)
     {
+        // Refuse the entire recovery before reverting any database if another source was edited externally.
+        _ = AllChangesApplied(manifest);
         foreach (var item in manifest.Databases)
         {
             ValidateDatabaseBackup(item);
             using var connection = OpenReadWrite(item.Source);
             QuickCheck(connection);
             using var transaction = connection.BeginTransaction(deferred: false);
+            if (item.Projection is not null)
+            {
+                PaginatedHistoryAdapter.Apply(connection, transaction, item.Projection, restore: true);
+                QuickCheck(connection, transaction); transaction.Commit(); continue;
+            }
             foreach (var row in item.Rows)
             {
                 var current = ReadProviderValue(connection, transaction, row.ThreadId);
@@ -323,6 +335,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
     {
         using var connection = OpenReadOnly(item.Backup);
         QuickCheck(connection);
+        if (item.Projection is not null) PaginatedHistoryAdapter.VerifyBackup(connection, item.Projection);
         foreach (var row in item.Rows)
             if (ReadProviderValue(connection, null, row.ThreadId) != row.OldProvider) throw new InvalidDataException("SQLite 恢复备份不匹配原始 provider。");
     }
@@ -370,21 +383,14 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             var hasBom = lineNumber == 0 && raw.StartsWith(Encoding.UTF8.Preamble);
             if (hasBom) raw = raw[Encoding.UTF8.Preamble.Length..];
             var text = new UTF8Encoding(false, true).GetString(raw);
-            if (text.Length > 0)
-            {
-                lineNumber++;
-                var rewritten = RewriteJsonLine(text, lineNumber, threadIds);
-                if (hasBom) output.Write(Encoding.UTF8.Preamble);
-                output.Write(Encoding.UTF8.GetBytes(rewritten));
-            }
-            else if (raw.Length > 0) output.Write(source.AsSpan(start, contentEnd - start));
+            lineNumber++;
+            if (hasBom) output.Write(Encoding.UTF8.Preamble);
+            if (!string.IsNullOrWhiteSpace(text)) output.Write(Encoding.UTF8.GetBytes(RewriteJsonLine(text, lineNumber, threadIds)));
+            else output.Write(raw);
             if (contentEnd < lineEnd) output.WriteByte(0x0D);
             if (newline >= 0) output.WriteByte(0x0A);
             if (newline < 0) break;
             start = newline + 1;
-            lineNumber++;
-            // lineNumber is used for diagnostics only. Avoid counting the same line twice.
-            if (text.Length > 0) lineNumber--;
         }
         return output.ToArray();
     }
@@ -419,7 +425,8 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             var ranges = FindJsonStringRanges(Encoding.UTF8.GetBytes(rewritten), targetPath);
             if (ranges.Count != 1) throw new InvalidDataException($"无法唯一定位历史 provider 字段（第 {lineNumber} 行），未修改历史。");
             var range = ranges[0];
-            rewritten = rewritten[..range.Start] + "\"openai\"" + rewritten[(range.Start + range.Length)..];
+            var utf8 = Encoding.UTF8.GetBytes(rewritten);
+            rewritten = Encoding.UTF8.GetString([.. utf8.AsSpan(0, range.Start), .. ReplacementToken, .. utf8.AsSpan(range.Start + range.Length)]);
             changed = true;
         }
 
@@ -604,21 +611,24 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
         try
         {
             var stamp = JsonSerializer.Deserialize<ReadyStamp>(files.ReadAllBytes(path));
-            return stamp is { Version: 2 } && string.Equals(stamp.CodexHome, paths.CodexHome, StringComparison.OrdinalIgnoreCase) && string.Equals(stamp.Fingerprint, fingerprint, StringComparison.Ordinal);
+            return stamp is { Version: 3 } && string.Equals(stamp.CodexHome, paths.CodexHome, StringComparison.OrdinalIgnoreCase) && string.Equals(stamp.Fingerprint, fingerprint, StringComparison.Ordinal);
         }
         catch (Exception ex) when (ex is JsonException or IOException) { return false; }
     }
 
     private void WriteReady(string path, string fingerprint, int fileCount, int databaseCount)
     {
-        var content = JsonSerializer.SerializeToUtf8Bytes(new ReadyStamp(2, paths.CodexHome, fingerprint, fileCount, databaseCount));
+        var content = JsonSerializer.SerializeToUtf8Bytes(new ReadyStamp(3, paths.CodexHome, fingerprint, fileCount, databaseCount));
         files.WriteAtomic(path, content);
     }
 
     private static string Fingerprint(IEnumerable<string> filePaths)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var path in filePaths.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+        // Committed changes may live exclusively in WAL; -shm is a volatile reader index, not content.
+        var contentFiles = filePaths.SelectMany(path => path.EndsWith(".sqlite", StringComparison.OrdinalIgnoreCase) && File.Exists(path + "-wal")
+            ? new[] { path, path + "-wal" } : new[] { path });
+        foreach (var path in contentFiles.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
         {
             var info = new FileInfo(path);
             var header = Encoding.UTF8.GetBytes($"{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}\n");

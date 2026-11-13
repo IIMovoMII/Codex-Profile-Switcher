@@ -1,8 +1,8 @@
 # 图形版使用说明
 
-当前源码及安装包版本：0.3.13，面向 Windows 10/11 x64。
+当前源码及安装包版本：0.3.14，面向 Windows 10/11 x64。
 
-本版采用 C# / .NET 10 WPF 与青绿色卡片界面，下载 [0.3.13 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.13)。[本版公告](releases/0.3.13.md)与应用内一致，本次修复 Codex 安装位置漏查。0.2.x 安装包是旧版 PowerShell 程序。
+本版采用 C# / .NET 10 WPF 与青绿色卡片界面，下载 [0.3.14 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.14)。[本版公告](releases/0.3.14.md)与应用内一致，本次修复分页历史兼容阻断切换的问题。0.2.x 安装包是旧版 PowerShell 程序。
 
 ## 安装和固定入口
 
@@ -64,7 +64,7 @@ API 模型目录必须采用完整 Codex 目录 JSON 格式，顶层含 `models`
 
 环境检查显示命令的实际路径，通过本地 `--version` 验证可运行性，不要求先登录。文件已找到但无法启动、位置无权限与未找到候选分别提示；不会仅因登录状态异常就说没有安装。自定义 CLI 可用 `CODEX_CLI_PATH` 或 `--codex-exe` 指定原生 `.exe`，不接受 PowerShell/CMD 包装脚本。
 
-历史库按表结构识别，覆盖 `CODEX_HOME` 和其 `sqlite` 子目录。分页历史投影如需随 JSONL 同步改写字节偏移，当前会在写入前明确停止；项目归属适配 `state_5.sqlite`，发现其他版本会说明格式尚未适配，保留原库。详细路径规则见[位置兼容说明](PATH_COMPATIBILITY.md)。
+历史库按表结构识别，覆盖 `CODEX_HOME` 和其 `sqlite` 子目录。已核验的原生分页格式会随 JSONL 同步游标、轮次偏移和本地分段继承边界，保留界面项目、聊天文字、未知字段及换行布局；遇到来源不明、异常游标或未知偏移字段时，仍在写入前明确停止。失败和取消会安全恢复，外部修改存在时保留恢复材料并停止覆盖。项目归属适配 `state_5.sqlite`，其他版本明确说明边界并保留原库。详细规则见[位置兼容说明](PATH_COMPATIBILITY.md)。
 
 ## 更新
 

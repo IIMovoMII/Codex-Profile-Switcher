@@ -8,6 +8,24 @@ namespace Switcher.Infrastructure.Tests;
 public sealed class StorageMaintenanceBehaviorTests
 {
     [Fact]
+    public async Task Version3_native_history_backups_follow_retention_but_pending_sets_remain_protected()
+    {
+        using var fixture = new Fixture();
+        var sets = Enumerable.Range(0, 5).Select(index => fixture.Backup(true, index)).ToArray();
+        foreach (var directory in sets)
+        {
+            var path = Path.Combine(directory, "manifest.json"); var stamp = File.GetLastWriteTimeUtc(path);
+            var manifest = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!; manifest["version"] = 3;
+            File.WriteAllText(path, manifest.ToJsonString()); File.SetLastWriteTimeUtc(path, stamp);
+        }
+        var pending = fixture.Backup(true, 10, "prepared"); var pendingPath = Path.Combine(pending, "manifest.json");
+        var pendingJson = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(pendingPath))!; pendingJson["version"] = 3; File.WriteAllText(pendingPath, pendingJson.ToJsonString());
+        var result = await fixture.Service.MaintainAsync();
+        Assert.Equal(2, result.BackupsRemoved); Assert.False(Directory.Exists(sets[0])); Assert.False(Directory.Exists(sets[1]));
+        Assert.All(sets.Skip(2), directory => Assert.True(Directory.Exists(directory))); Assert.True(Directory.Exists(pending));
+    }
+
+    [Fact]
     public async Task Retention_bounds_completed_sets_but_preserves_pending_unknown_and_user_material()
     {
         using var fixture = new Fixture();

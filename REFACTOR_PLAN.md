@@ -1,5 +1,15 @@
 # C# / .NET 10 实施与验证计划
 
+## 当前任务：0.3.14 分页历史兼容与迁移回归（进行中）
+
+- 基线 `8809ad9`，工作区干净。0.3.13 的分页库保护性拦截阻断正常切换；本轮补齐已知分页索引的正式 C# 适配，不能仅移除拦截或用快速切换掩盖问题。
+- 对照旧历史实现与合成夹具，明确 JSONL 字节映射、thread_items/thread_turns/thread_history_projection_state 及 threads 元数据的同步规则；保留未知列和无关账号/线程。检查同类 JSON 字节位置、缓存指纹、库格式/恢复遗漏。
+- 分阶段恢复记录覆盖 JSONL 与所有数据库投影；执行前检查并发变化，部分失败/中断/取消可恢复，遇外部变化停止覆盖。历史准备仍独立于后续认证切换。
+- 增加实际分页数据、UTF-8/CRLF/BOM、多个数据库/WAL、增量、故障/中断/外部变化与完整切换的隔离回归。完成构建、测试、文档、0.3.14 自包含包及隔离验收，按既有授权同步 GitHub 与公告并验证公开更新。
+- 已接入 HistoryJournal 字节边界映射与 PaginatedHistoryAdapter：原生项目来源核验、游标/轮次偏移、逻辑/分段身份、本地父段继承、未知字段保留；版本 3 恢复计划兼容版本 2，回退前先检查所有来源。修复 UTF-8 字节/字符索引混用、BOM/空白布局、WAL 指纹和新备份版本保留遗漏。
+- 最终本地构建 0 警告/错误，161 项 xUnit（Core 6、Infrastructure 138、Desktop 13、CLI 4）全部通过，无跳过；其中新增 29 项分页回归、3 项连接实际历史服务的完整切换与 1 项新备份保留回归。覆盖总长度不变但中间偏移已变、空投影表的并发插入、WAL 备份/回退和已持久化计划的重启恢复状态。直接/传递依赖无已知漏洞，真实 WSH/CMD 入口验证通过。证据 artifacts/test-0.3.14。
+- 自包含安装器已生成并通过隔离安装：dist/0.3.14-release/Codex-Profile-Switcher-Setup-0.3.14.exe，45,944,639 字节，SHA-256 `0ec162123baafa223126960bcc59e06dccbfebedd526e531be396525a3359818`；发布目录 artifacts/publish/v0.3.14-release。283 项载荷清单、15 项静态文件与源码匹配；副本 WPF/CLI 启动、旧固定入口升级/修改保护、卸载和数据留存均通过。未修改本机真实安装、快捷方式或账号。源码隐私扫描通过，准备同步 GitHub；公开更新与 CI 尚待验收。
+
 ## 当前任务：0.3.13 文件位置兼容与错误分类（已完成）
 
 - 基线 `9b83495`，工作区干净。截图的 0.3.12 报错可由本机安装布局与源码对应：CLI 实际位于 `%LOCALAPPDATA%/OpenAI/Codex/bin/<版本>/codex.exe`，新版仅扫描 Programs 和 PATH，遗漏旧实现已有的 Desktop bin 与 CODEX_CLI_PATH 支持；公开 0.3.12 同样受影响。
@@ -35,7 +45,7 @@
 | 完整切换、重新应用、进度、取消、互斥和持久日志 | Core/Switching、Infrastructure/Switching | 同类/跨类档案、计划校验、写前并发检查、写后验证、分阶段恢复和外部修改保护 |
 | 模型、上下文和代理策略、个人偏好 | Core/Configuration、Infrastructure/Configuration | 继承/保留/显式设置、TOML 语法与注释、未知字段、配置及偏好保留 |
 | 手动目录、指定官方账号快照、真实路径与时间 | Infrastructure/Models、Desktop/ProfileEditorViewModel | 官方缓存只读、完整 models 字段、来源隔离、无效缓存留旧快照、手动文件保护 |
-| 共享聊天、增量历史、SQLite/WAL、项目投影 | Infrastructure/History、CodexAdapters | JSONL 字节保留、已适配数据库投影、无变更不建备份、提交后失败与重启恢复；分页投影偏移改写及非 state_5 项目格式当前保护性停止/跳过 |
+| 共享聊天、增量历史、SQLite/WAL、项目投影 | Infrastructure/History、CodexAdapters | JSONL 字节布局、原生分页游标/轮次/分段继承、界面来源、WAL 增量、无变更不建备份、提交后失败与重启恢复；未知偏移/来源及非 state_5 项目格式保护性停止/跳过 |
 | 账号私有桌面状态与共享项目、个人设置 | CodexAdapters/DesktopStateAdapter | JSON 形状与未知字段、私有/共享状态边界、恢复材料、配置并发保护 |
 | 子进程、超时、取消与环境检查 | Infrastructure/Processes | stdout/stderr 分开、成功 stderr、失败退出码、超时/取消、特殊字符、子进程独立环境 |
 | GitHub 更新与同源公告 | Infrastructure/Updates、Core/Updates | API 限流网页回退、来源限制、超时重试、SHA-256、确认下载/安装、版本 Markdown 嵌入与 Release 一致 |

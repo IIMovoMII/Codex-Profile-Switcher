@@ -39,4 +39,6 @@
 
 更新连接、目录定位与保留策略集中在 `GitHubUpdateService`、`DataLocationResolver` 和 `StorageMaintenanceService`。更新测试使用模拟 HTTP，定位测试注入临时环境和访问错误，清理测试覆盖恢复依赖、旧版清单、外部路径和未完成操作；不要用真实运行数据做清理验收。GUI 预览可运行 `tests/start-frontend-preview.ps1 -DotNetPath <SDK路径> -AutomaticLocations`，使用临时环境验证默认定位。
 
+历史格式适配集中在 `HistoryJournal`、`PaginatedHistoryAdapter` 与 `HistoryCompatibilityService`。改动须覆盖合成原生分页、UTF-8 字节边界、逻辑/分段身份、父段继承、部分游标、独立/合并 SQLite 及 WAL；同时断言界面 ID、文字、ordinal、未知字段不变。不能只看文件总长度，也不能删除遇到未知结构时停止写入的断言。故障验证应覆盖提交前后、取消、持久恢复记录重启和外部改动，普通切换回归必须连接实际历史服务；历史完成而认证失败时保留历史结果。
+
 `-AutomaticExecutable` 会把模拟 CLI 放入临时 Desktop bin 版本目录，删除子进程中的 `CODEX_CLI_PATH`、隔离 PATH，并通过正常 WPF EXE 启动；配合 `-AutomaticLocations` 可实际点击环境检查，验证全部自动定位链，没有调用本机 Codex。
