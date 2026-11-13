@@ -8,10 +8,12 @@ using Switcher.Core.Switching;
 namespace Switcher.Infrastructure.Processes;
 
 /// <summary>All Codex process interaction lives here so the UI and CLI never shell out to PowerShell.</summary>
-public sealed class CodexRuntime(IProcessRunner runner, SwitcherPaths paths, string? configuredExecutable = null) : ICodexRuntime
+public sealed class CodexRuntime(IProcessRunner runner, SwitcherPaths paths, string? configuredExecutable = null,
+    CodexExecutableResolver? executableResolver = null) : ICodexRuntime
 {
-    private readonly string? _configuredExecutable = configuredExecutable;
+    private readonly string? _configuredExecutable = configuredExecutable ?? paths.CodexExecutable;
     private readonly SwitcherPaths _paths = paths;
+    private readonly CodexExecutableResolver _executableResolver = executableResolver ?? new();
 
     public async Task<IReadOnlyList<string>> FindRunningProcessNamesAsync(CancellationToken cancellationToken)
     {
@@ -34,15 +36,26 @@ public sealed class CodexRuntime(IProcessRunner runner, SwitcherPaths paths, str
 
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
     {
+        return (await InspectAsync(cancellationToken).ConfigureAwait(false)).CanRun;
+    }
+
+    public async Task<CodexCommandStatus> InspectAsync(CancellationToken cancellationToken)
+    {
+        string executable;
+        try { executable = _executableResolver.Resolve(_configuredExecutable, cancellationToken); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        { return new(false, false, "", ex.Message); }
         try
         {
-            var result = await RunStatusAsync(cancellationToken).ConfigureAwait(false);
-            return result.ExitCode == 0;
+            var result = await runner.RunAsync(new ProcessRequest(executable, ["--version"], _paths.CodexHome,
+                CleanEnvironment(_paths.CodexHome), TimeSpan.FromSeconds(10)), cancellationToken).ConfigureAwait(false);
+            return new(true, result.ExitCode == 0 && !result.TimedOut, executable,
+                result.TimedOut ? "已找到文件，但版本检查超时；请检查该程序能否运行。" : result.ExitCode == 0
+                    ? "Codex CLI 可执行（本地版本检查，无需登录）。"
+                    : $"已找到文件，但版本检查返回退出码 {result.ExitCode}；请检查安装是否完整。");
         }
-        catch (Exception ex) when (ex is IOException or Win32Exception or TimeoutException)
-        {
-            return false;
-        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or TimeoutException)
+        { return new(true, false, executable, "已找到文件，但无法运行；请检查访问权限、文件格式与安装完整性。"); }
     }
 
     public async Task VerifyAuthenticationAsync(ProfileKind expectedKind, CancellationToken cancellationToken, string? codexHome = null)
@@ -58,15 +71,9 @@ public sealed class CodexRuntime(IProcessRunner runner, SwitcherPaths paths, str
 
     public async Task LoginInteractivelyAsync(string codexHome, CancellationToken cancellationToken)
     {
-        var executable = ResolveExecutable();
+        var executable = _executableResolver.Resolve(_configuredExecutable, cancellationToken);
         var result = await runner.RunAsync(new ProcessRequest(executable, ["login"], codexHome,
-            new Dictionary<string, string?>
-            {
-                ["CODEX_HOME"] = codexHome,
-                ["OPENAI_API_KEY"] = null,
-                ["OPENAI_BASE_URL"] = null,
-                ["CODEX_ACCESS_TOKEN"] = null
-            }, Interactive: true), cancellationToken).ConfigureAwait(false);
+            CleanEnvironment(codexHome), Interactive: true), cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0) throw new InvalidOperationException($"codex login 已退出，退出码为 {result.ExitCode}。 ");
     }
 
@@ -90,37 +97,15 @@ public sealed class CodexRuntime(IProcessRunner runner, SwitcherPaths paths, str
 
     private Task<ProcessResult> RunStatusAsync(CancellationToken cancellationToken, string? codexHome = null)
     {
-        var executable = ResolveExecutable();
+        var executable = _executableResolver.Resolve(_configuredExecutable, cancellationToken);
         var home = codexHome ?? _paths.CodexHome;
         return runner.RunAsync(new ProcessRequest(executable, ["login", "status"], home,
-            new Dictionary<string, string?>
-            {
-                ["CODEX_HOME"] = home,
-                ["OPENAI_API_KEY"] = null,
-                ["OPENAI_BASE_URL"] = null,
-                ["CODEX_ACCESS_TOKEN"] = null
-            }, TimeSpan.FromSeconds(30)), cancellationToken);
+            CleanEnvironment(home), TimeSpan.FromSeconds(30)), cancellationToken);
     }
 
-    private string ResolveExecutable()
+    private static IReadOnlyDictionary<string, string?> CleanEnvironment(string home) => new Dictionary<string, string?>
     {
-        if (!string.IsNullOrWhiteSpace(_configuredExecutable))
-        {
-            var configured = Path.GetFullPath(_configuredExecutable);
-            if (File.Exists(configured)) return configured;
-            throw new FileNotFoundException("找不到配置的 Codex 可执行文件。", configured);
-        }
-        var candidates = new List<string>();
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (!string.IsNullOrWhiteSpace(local))
-            candidates.AddRange(Directory.Exists(Path.Combine(local, "Programs"))
-                ? Directory.EnumerateFiles(Path.Combine(local, "Programs"), "codex.exe", SearchOption.AllDirectories)
-                : []);
-        var path = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Select(folder => Path.Combine(folder, "codex.exe"))
-            .Where(File.Exists) ?? [];
-        candidates.AddRange(path);
-        var resolved = candidates.OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
-        return resolved ?? throw new FileNotFoundException("在 PATH 或本机 Codex 安装目录中找不到 codex.exe。");
-    }
+        ["CODEX_HOME"] = home, ["OPENAI_API_KEY"] = null, ["OPENAI_BASE_URL"] = null, ["CODEX_ACCESS_TOKEN"] = null
+    };
+
 }

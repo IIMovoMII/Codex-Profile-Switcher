@@ -50,6 +50,17 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
         }
 
         var dbPlans = new List<DatabasePlan>();
+        if (filePlans.Count > 0)
+        {
+            foreach (var database in databasePaths)
+            {
+                using var connection = OpenReadOnly(database);
+                using var schema = connection.CreateCommand();
+                schema.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('thread_items','thread_turns','thread_history_projection_state')";
+                if (Convert.ToInt32(schema.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) > 0)
+                    throw new InvalidDataException("已发现分页历史投影数据库。当前改写需要同步其 JSONL 字节偏移，但此格式尚未适配；为保护聊天，已在写入前停止历史准备，未把数据库当成缺失文件。");
+            }
+        }
         foreach (var database in databasePaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -514,7 +525,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             foreach (var file in Directory.EnumerateFiles(folder, "*.sqlite", SearchOption.TopDirectoryOnly))
             {
                 cancellationTokenThrowIfCorrupt(file);
-                if (HasThreadsTable(file)) yield return Path.GetFullPath(file);
+                if (HasHistoryTable(file)) yield return Path.GetFullPath(file);
             }
         }
     }
@@ -525,10 +536,10 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
         QuickCheck(connection);
     }
 
-    private static bool HasThreadsTable(string path)
+    private static bool HasHistoryTable(string path)
     {
         using var connection = OpenReadOnly(path);
-        using var command = connection.CreateCommand(); command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='threads'";
+        using var command = connection.CreateCommand(); command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('threads','thread_items','thread_turns','thread_history_projection_state')";
         return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) > 0;
     }
 

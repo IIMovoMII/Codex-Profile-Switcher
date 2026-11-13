@@ -24,7 +24,11 @@ public partial class App : Application
                 if (recovery.ShowDialog() != true) { Shutdown(1); return; }
                 resolution = recovery.Resolution;
             }
-            var host = ApplicationHost.Create(resolution.Paths, options.CodexExecutable);
+            var host = ApplicationHost.Create(resolution.Paths with
+            {
+                ManualModelCatalogOverride = options.RelayModelCatalogPath,
+                MonitorDataDirectory = options.MonitorDataDirectory
+            }, options.CodexExecutable);
             var window = new MainWindow(host);
             MainWindow = window;
             ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -38,13 +42,16 @@ public partial class App : Application
     }
 }
 
-internal sealed record DesktopStartupOptions(string? CodexHome, string? DataDirectory, string? CodexExecutable)
+internal sealed record DesktopStartupOptions(string? CodexHome, string? DataDirectory, string? CodexExecutable,
+    string? RelayModelCatalogPath = null, string? MonitorDataDirectory = null)
 {
     public static DesktopStartupOptions Parse(string[] args)
     {
         string? home = null;
         string? data = null;
         string? executable = null;
+        string? catalog = null;
+        string? monitor = null;
         for (var index = 0; index < args.Length; index++)
         {
             var name = args[index].TrimStart('-').ToLowerInvariant().Replace("-", "", StringComparison.Ordinal);
@@ -56,10 +63,11 @@ internal sealed record DesktopStartupOptions(string? CodexHome, string? DataDire
                 case "codexhome": home = value; break;
                 case "datadir": case "datadirectory": data = value; break;
                 case "codexexe": case "codexexecutable": executable = value; break;
-                case "monitordatadir": case "relaymodelcatalogpath": _ = value; break;
+                case "monitordatadir": monitor = value; break;
+                case "relaymodelcatalogpath": catalog = value; break;
                 default: index--; break;
             }
         }
-        return new DesktopStartupOptions(home, data, executable);
+        return new DesktopStartupOptions(home, data, executable, catalog, monitor);
     }
 }

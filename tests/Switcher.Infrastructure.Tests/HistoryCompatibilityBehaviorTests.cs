@@ -9,6 +9,45 @@ namespace Switcher.Infrastructure.Tests;
 
 public sealed class HistoryCompatibilityBehaviorTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("sqlite")]
+    public async Task Projection_only_databases_are_discovered_by_schema_in_both_legacy_locations(string relative)
+    {
+        using var fixture = new Fixture();
+        var directory = Path.Combine(fixture.Paths.CodexHome, relative); Directory.CreateDirectory(directory);
+        using (var connection = new SqliteConnection($"Data Source={Path.Combine(directory, "thread_history_future.sqlite")};Pooling=False"))
+        {
+            connection.Open(); using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE thread_history_projection_state(thread_id TEXT PRIMARY KEY,next_rollout_byte_offset INTEGER);";
+            command.ExecuteNonQuery();
+        }
+        var result = await fixture.Service.PrepareAsync(true, null, CancellationToken.None);
+        Assert.Equal(1, result.DatabaseCount); Assert.True(result.Prepared); Assert.False(result.Changed);
+    }
+
+    [Fact]
+    public async Task Unadapted_projection_format_is_reported_as_found_and_stops_before_any_history_write()
+    {
+        using var fixture = new Fixture();
+        Directory.CreateDirectory(fixture.Paths.CodexHome);
+        var database = Path.Combine(fixture.Paths.CodexHome, "thread_history_1.sqlite");
+        using (var connection = new SqliteConnection($"Data Source={database};Pooling=False"))
+        {
+            connection.Open(); using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE thread_items(thread_id TEXT,item_json TEXT); INSERT INTO thread_items VALUES('synthetic','original');";
+            command.ExecuteNonQuery();
+        }
+        var originalDatabase = File.ReadAllBytes(database);
+        var history = Path.Combine(fixture.Paths.CodexHome, "archived_sessions", "nested", "synthetic.jsonl");
+        var originalHistory = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"synthetic\",\"model_provider\":\"relay\"}}\r\n"u8.ToArray();
+        fixture.Files.WriteAtomic(history, originalHistory);
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Service.PrepareAsync(true, null, CancellationToken.None));
+        Assert.Contains("已发现分页历史投影数据库", error.Message);
+        Assert.Equal(originalDatabase, File.ReadAllBytes(database)); Assert.Equal(originalHistory, File.ReadAllBytes(history));
+        Assert.False(File.Exists(fixture.Paths.HistoryReadyFile)); Assert.False(Directory.Exists(fixture.Paths.HistoryBackupsDirectory));
+    }
+
     [Fact]
     public async Task Repeated_full_scans_without_changes_do_not_generate_empty_backups()
     {

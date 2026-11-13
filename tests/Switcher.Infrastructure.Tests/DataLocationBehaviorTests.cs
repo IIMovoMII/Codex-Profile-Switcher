@@ -62,6 +62,23 @@ public sealed class DataLocationBehaviorTests
     }
 
     [Fact]
+    public void Existing_but_locked_location_record_is_not_ignored_as_a_fresh_install()
+    {
+        using var fixture = new Fixture();
+        var home = Path.Combine(fixture.Root, "remembered home"); var data = Path.Combine(fixture.Root, "remembered data");
+        var selected = fixture.Resolver.Resolve(home, data); fixture.Resolver.Remember(selected.Paths);
+        var original = File.ReadAllBytes(fixture.Resolver.LocatorFile);
+        using (var held = new FileStream(fixture.Resolver.LocatorFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var result = fixture.Resolver.Resolve();
+            Assert.False(result.IsValid); Assert.Contains("无法读取", result.Message);
+            Assert.False(Directory.Exists(fixture.DefaultData)); Assert.False(Directory.Exists(fixture.DefaultHome));
+        }
+        Assert.Equal(original, File.ReadAllBytes(fixture.Resolver.LocatorFile));
+        Assert.True(fixture.Resolver.Resolve().IsValid);
+    }
+
+    [Fact]
     public void Damaged_registry_is_not_treated_as_a_new_empty_collection()
     {
         using var fixture = new Fixture(); Directory.CreateDirectory(fixture.DefaultData);

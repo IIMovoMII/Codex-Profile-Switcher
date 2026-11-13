@@ -12,6 +12,7 @@ $script:DistributionFiles = @(
     'LICENSE.txt',
     'THIRD-PARTY-NOTICES.txt',
     'docs\zh-CN\INSTALL.md',
+    'docs\zh-CN\PATH_COMPATIBILITY.md',
     'docs\images\accounts.jpg',
     ('docs\zh-CN\releases\' + ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'version.txt')).Trim()) + '.md')
 )

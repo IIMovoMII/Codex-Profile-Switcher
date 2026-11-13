@@ -24,10 +24,15 @@ internal static class Program
         {
             var options = CliOptions.Parse(args);
             if (options.Help || options.Command is null) { PrintHelp(); return 0; }
-            if (options.Command is "menu" or "setup" or "init") return LaunchDesktop(options.CodexHome, options.DataDirectory, options.CodexExecutable);
+            if (options.Command is "menu" or "setup" or "init") return LaunchDesktop(options.CodexHome, options.DataDirectory, options.CodexExecutable,
+                options.RelayModelCatalogPath, options.MonitorDataDirectory);
             var resolution = new DataLocationResolver().Resolve(options.CodexHome, options.DataDirectory, options.CodexExecutable);
             if (!resolution.IsValid) throw new IOException(resolution.Message + " 可使用 --codex-home 和 --data-dir 指定原有目录。");
-            var host = ApplicationHost.Create(resolution.Paths, options.CodexExecutable);
+            var host = ApplicationHost.Create(resolution.Paths with
+            {
+                ManualModelCatalogOverride = options.RelayModelCatalogPath,
+                MonitorDataDirectory = options.MonitorDataDirectory
+            }, options.CodexExecutable);
             await host.Storage.TryMaintainAsync().ConfigureAwait(false);
             try { return await ExecuteAsync(host, options, cancellation.Token).ConfigureAwait(false); }
             finally { await host.Storage.TryMaintainAsync().ConfigureAwait(false); }
@@ -174,7 +179,8 @@ internal static class Program
         var registry = host.Registry.Load(); return kind == ProfileKind.Api ? registry.ActiveApiProfileId : registry.ActiveOfficialProfileId;
     }
 
-    private static int LaunchDesktop(string? codexHome, string? dataDirectory, string? codexExecutable)
+    private static int LaunchDesktop(string? codexHome, string? dataDirectory, string? codexExecutable,
+        string? relayModelCatalogPath = null, string? monitorDataDirectory = null)
     {
         var app = Path.Combine(AppContext.BaseDirectory, "CodexProfileSwitcher.exe");
         if (!File.Exists(app)) throw new FileNotFoundException("图形界面文件不存在。请运行固定入口或重新安装应用。", app);
@@ -182,6 +188,8 @@ internal static class Program
         AddArgument(start, "--codex-home", codexHome);
         AddArgument(start, "--data-dir", dataDirectory);
         AddArgument(start, "--codex-exe", codexExecutable);
+        AddArgument(start, "--relay-model-catalog-path", relayModelCatalogPath);
+        AddArgument(start, "--monitor-data-dir", monitorDataDirectory);
         Process.Start(start);
         return 0;
     }
@@ -227,6 +235,8 @@ internal sealed class CliOptions
     public string? CodexHome { get; private set; }
     public string? DataDirectory { get; private set; }
     public string? CodexExecutable { get; private set; }
+    public string? RelayModelCatalogPath { get; private set; }
+    public string? MonitorDataDirectory { get; private set; }
     public string? Profile { get; private set; }
     public string? Kind { get; private set; }
     public string? Name { get; private set; }
@@ -265,7 +275,8 @@ internal sealed class CliOptions
                         case "codexhome": result.CodexHome = value; break;
                         case "datadir": case "datadirectory": result.DataDirectory = value; break;
                         case "codexexe": case "codexexecutable": result.CodexExecutable = value; break;
-                        case "monitordatadir": case "relaymodelcatalogpath": break;
+                        case "monitordatadir": result.MonitorDataDirectory = value; break;
+                        case "relaymodelcatalogpath": result.RelayModelCatalogPath = value; break;
                         case "profile": result.Profile = value; break;
                         case "kind": result.Kind = value; break;
                         case "name": result.Name = value; break;

@@ -4,7 +4,12 @@ namespace Switcher.Infrastructure.Files;
 
 public sealed class PhysicalSwitcherFileSystem : ISwitcherFileSystem
 {
-    public bool FileExists(string path) => File.Exists(path);
+    public bool FileExists(string path)
+    {
+        try { return (File.GetAttributes(path) & FileAttributes.Directory) == 0; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public byte[] ReadAllBytes(string path) => File.ReadAllBytes(path);
     public string ReadAllText(string path) => File.ReadAllText(path, new System.Text.UTF8Encoding(false, true));

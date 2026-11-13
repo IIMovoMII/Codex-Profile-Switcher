@@ -1,6 +1,6 @@
 ﻿#requires -Version 5.1
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$DotNetPath, [switch]$AutomaticLocations, [string]$EvidenceDirectory)
+param([Parameter(Mandatory = $true)][string]$DotNetPath, [switch]$AutomaticLocations, [switch]$AutomaticExecutable, [string]$EvidenceDirectory)
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 $previewRoot = Join-Path ([IO.Path]::GetTempPath()) ('SwitcherFrontendPreview-' + [Guid]::NewGuid().ToString('N'))
@@ -11,12 +11,12 @@ $previewMock = Join-Path $previewRoot 'mock'
 foreach ($directory in @($previewHome, $previewData, $previewMock)) { [void][IO.Directory]::CreateDirectory($directory) }
 $utf8 = New-Object Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $previewMock 'MockCodex.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>', $utf8)
-[IO.File]::WriteAllText((Join-Path $previewMock 'Program.cs'), 'await Task.Delay(1800); Console.Error.WriteLine("synthetic diagnostic notice"); Console.WriteLine("Logged in using an API key"); return 0;', $utf8)
+[IO.File]::WriteAllText((Join-Path $previewMock 'Program.cs'), 'File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "calls.log"), string.Join(" ", args) + Environment.NewLine); await Task.Delay(1800); Console.Error.WriteLine("synthetic diagnostic notice"); Console.WriteLine(args.Contains("--version") ? "codex-cli synthetic-preview" : "Logged in using an API key"); return 0;', $utf8)
 & $DotNetPath build (Join-Path $previewMock 'MockCodex.csproj') --output (Join-Path $previewMock 'bin') --verbosity quiet
 if ($LASTEXITCODE -ne 0) { throw 'Mock CLI build failed.' }
 $cliDll = Join-Path $project 'src\Switcher.Cli\bin\Debug\net10.0-windows\Switcher.Cli.dll'
-$desktopDll = Join-Path $project 'src\Switcher.Desktop\bin\Debug\net10.0-windows\CodexProfileSwitcher.dll'
-if (-not [IO.File]::Exists($desktopDll)) { throw 'Run dotnet build first.' }
+$desktopExe = Join-Path $project 'src\Switcher.Desktop\bin\Debug\net10.0-windows\CodexProfileSwitcher.exe'
+if (-not [IO.File]::Exists($desktopExe)) { throw 'Run dotnet build first.' }
 $catalog = Join-Path $previewData 'relay-models.json'
 [IO.File]::WriteAllText($catalog, '{"models":[{"slug":"custom-model-a","display_name":"示例模型 A","context_window":128000,"unknown":{"nullable":null,"single":[1]}},{"slug":"custom-model-b","display_name":"示例模型 B"}]}', $utf8)
 foreach ($entry in @(@('工作接口', 'https://api.example.com/v1', 'synthetic-api-one'), @('开发接口', 'https://dev.example.com/v1', 'synthetic-api-two'))) {
@@ -36,17 +36,26 @@ foreach ($suffix in @('primary', 'backup')) {
 }
 [IO.File]::WriteAllText((Join-Path $previewHome 'config.toml'), "# synthetic preview only`r`nmodel_provider = `"openai`"`r`nmodel = `"keep-user-model`"`r`n", $utf8)
 $start = New-Object Diagnostics.ProcessStartInfo
-$start.FileName = [IO.Path]::GetFullPath($DotNetPath)
+$start.FileName = $desktopExe
 $mockExe = Join-Path $previewMock 'bin\MockCodex.exe'
-$start.Arguments = '"' + $desktopDll + '" --codex-home "' + $previewHome + '" --data-dir "' + $previewData + '" --codex-exe "' + $mockExe + '"'
+$start.Arguments = '--codex-home "' + $previewHome + '" --data-dir "' + $previewData + '"'
 if ($AutomaticLocations) {
-    $start.Arguments = '"' + $desktopDll + '" --codex-exe "' + $mockExe + '"'
-    $start.EnvironmentVariables['USERPROFILE'] = Join-Path $previewRoot 'user'
-    $start.EnvironmentVariables['LOCALAPPDATA'] = Join-Path $previewRoot 'local'
-    $start.EnvironmentVariables['CODEX_HOME'] = $previewHome
-    [void][IO.Directory]::CreateDirectory((Join-Path $previewRoot 'user\Desktop'))
+    $start.Arguments = ''
 }
+if ($AutomaticExecutable) {
+    $desktopBin = Join-Path $previewRoot 'local\OpenAI\Codex\bin\synthetic-build'
+    [void][IO.Directory]::CreateDirectory($desktopBin)
+    Get-ChildItem -LiteralPath (Join-Path $previewMock 'bin') -File | Copy-Item -Destination $desktopBin
+    $mockExe = Join-Path $desktopBin 'codex.exe'
+    Copy-Item -LiteralPath (Join-Path $desktopBin 'MockCodex.exe') -Destination $mockExe
+} else { $start.Arguments += ' --codex-exe "' + $mockExe + '"' }
+$start.EnvironmentVariables['USERPROFILE'] = Join-Path $previewRoot 'user'
+$start.EnvironmentVariables['LOCALAPPDATA'] = Join-Path $previewRoot 'local'
+$start.EnvironmentVariables['CODEX_HOME'] = $previewHome
+[void][IO.Directory]::CreateDirectory((Join-Path $previewRoot 'user\Desktop'))
 $start.EnvironmentVariables['APPDATA'] = Join-Path $previewRoot 'roaming'
+$start.EnvironmentVariables['PATH'] = Join-Path $env:SystemRoot 'System32'
+$start.EnvironmentVariables.Remove('CODEX_CLI_PATH')
 $start.UseShellExecute = $false
 $start.EnvironmentVariables['CODEX_SWITCHER_DISABLE_UPDATE_CHECK'] = '1'
 $start.EnvironmentVariables['DOTNET_ROOT'] = Split-Path -Parent $DotNetPath

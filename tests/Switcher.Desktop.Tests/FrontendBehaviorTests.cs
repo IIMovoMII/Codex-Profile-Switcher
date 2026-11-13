@@ -15,6 +15,18 @@ namespace Switcher.Desktop.Tests;
 
 public sealed class FrontendBehaviorTests
 {
+    [Theory]
+    [InlineData("-RelayModelCatalogPath", "-MonitorDataDir")]
+    [InlineData("--relay-model-catalog-path", "--monitor-data-dir")]
+    public void Legacy_location_options_are_retained_by_desktop_parser(string catalogOption, string monitorOption)
+    {
+        var type = typeof(App).Assembly.GetType("Switcher.Desktop.DesktopStartupOptions", throwOnError: true)!;
+        var args = new[] { catalogOption, "D:\\synthetic 目录\\catalog.json", monitorOption, "D:\\synthetic monitor" };
+        var parsed = type.GetMethod("Parse")!.Invoke(null, new object[] { args });
+        Assert.Equal(args[1], type.GetProperty("RelayModelCatalogPath")!.GetValue(parsed));
+        Assert.Equal(args[3], type.GetProperty("MonitorDataDirectory")!.GetValue(parsed));
+    }
+
     [Fact]
     public Task Manual_location_selection_is_only_available_after_a_location_becomes_invalid() => Sta(async () =>
     {

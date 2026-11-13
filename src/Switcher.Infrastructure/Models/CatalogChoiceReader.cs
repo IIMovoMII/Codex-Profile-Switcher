@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Switcher.Infrastructure.Files;
 
 namespace Switcher.Infrastructure.Models;
 
@@ -7,12 +8,16 @@ public sealed record CatalogModelChoice(string Id, string DisplayName)
     public string Label => string.IsNullOrWhiteSpace(DisplayName) || DisplayName == Id ? Id : $"{DisplayName} · {Id}";
 }
 
+public sealed record CatalogFileDetails(bool Exists, DateTime? Updated, IReadOnlyList<CatalogModelChoice> Models);
+
 /// <summary>A read-only projection for the model selector; it never rewrites a catalog.</summary>
 public static class CatalogChoiceReader
 {
-    public static IReadOnlyList<CatalogModelChoice> Read(string path)
+    public static IReadOnlyList<CatalogModelChoice> Read(string path) => Inspect(path).Models;
+
+    public static CatalogFileDetails Inspect(string path)
     {
-        if (!File.Exists(path)) return [];
+        if (string.IsNullOrWhiteSpace(path) || !new PhysicalSwitcherFileSystem().FileExists(path)) return new(false, null, []);
         if (new FileInfo(path).Length > 32 * 1024 * 1024) throw new InvalidDataException("模型目录过大，暂不加载下拉列表；仍可输入模型 ID。");
         using var document = JsonDocument.Parse(File.ReadAllBytes(path));
         if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("models", out var models) || models.ValueKind != JsonValueKind.Array)
@@ -26,6 +31,6 @@ public static class CatalogChoiceReader
             if (string.IsNullOrWhiteSpace(id)) id = ReadText("id");
             if (!string.IsNullOrWhiteSpace(id)) result.Add(new CatalogModelChoice(id, ReadText("display_name")));
         }
-        return result.DistinctBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        return new(true, File.GetLastWriteTime(path), result.DistinctBy(item => item.Id, StringComparer.Ordinal).ToArray());
     }
 }

@@ -14,12 +14,19 @@ public interface ICodexRuntime
 {
     Task<IReadOnlyList<string>> FindRunningProcessNamesAsync(CancellationToken cancellationToken);
     Task<bool> IsAvailableAsync(CancellationToken cancellationToken);
+    async Task<CodexCommandStatus> InspectAsync(CancellationToken cancellationToken)
+    {
+        var available = await IsAvailableAsync(cancellationToken).ConfigureAwait(false);
+        return new(available, available, "", available ? "Codex 命令可执行" : "Codex 命令尚未确认");
+    }
     Task VerifyAuthenticationAsync(ProfileKind expectedKind, CancellationToken cancellationToken, string? codexHome = null);
     Task LoginInteractivelyAsync(string codexHome, CancellationToken cancellationToken);
     void EnsureNoAuthenticationOverrides();
     IReadOnlyList<string> GetAuthenticationOverrides();
     IReadOnlyDictionary<string, string?> GetProcessEnvironment();
 }
+
+public sealed record CodexCommandStatus(bool Found, bool CanRun, string ExecutablePath, string Message);
 
 public interface IModelCatalogProvider
 {

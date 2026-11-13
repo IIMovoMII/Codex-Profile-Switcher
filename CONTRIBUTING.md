@@ -18,6 +18,8 @@
 ## 兼容和安全
 
 - 保留当前档案注册表、DPAPI 熵参数、已有账号 ID、模型目录及备份格式；遇到未知结构时按功能边界停止写入或跳过可选操作。
+- 位置与格式的兼容范围见 [PATH_COMPATIBILITY.md](docs/zh-CN/PATH_COMPATIBILITY.md)。迁移或新增文件类别时列出旧版位置、候选顺序、显式覆盖及访问/格式错误；GUI 和业务共用定位结果。不得把所有读取异常吞成“不存在”，不得通过全盘寻找同名文件绕过来源核验。
+- 自动发现回归至少包含不传 `--codex-exe` 等覆盖的成功用例，以及版本目录变动、候选失效、权限/占用、格式未适配与回退。仅用显式路径或 mock 核心接口的测试不能覆盖发现层。
 - 不覆盖配置、目录或数据库中的无关字段。多文件操作需提供持久化恢复材料，并在检测到外部修改时拒绝覆盖。
 - 日志、CLI 输出和普通错误信息不得包含 API Key、Token 或完整认证内容。测试使用 `example.invalid` 和合成路径。
 - 不提交认证文件、账号快照、聊天、用户日志、用户备份、运行数据、安装包或本机路径。
@@ -36,3 +38,5 @@
 `tests/test-installer.ps1` 使用独立临时安装目录、启动器、CODEX_HOME、数据目录和每次随机的安装登记标识；不创建真实快捷方式。安装副本必须能正常启动和关闭 WPF，再验证旧入口备份迁移、卸载和运行数据留存。
 
 更新连接、目录定位与保留策略集中在 `GitHubUpdateService`、`DataLocationResolver` 和 `StorageMaintenanceService`。更新测试使用模拟 HTTP，定位测试注入临时环境和访问错误，清理测试覆盖恢复依赖、旧版清单、外部路径和未完成操作；不要用真实运行数据做清理验收。GUI 预览可运行 `tests/start-frontend-preview.ps1 -DotNetPath <SDK路径> -AutomaticLocations`，使用临时环境验证默认定位。
+
+`-AutomaticExecutable` 会把模拟 CLI 放入临时 Desktop bin 版本目录，删除子进程中的 `CODEX_CLI_PATH`、隔离 PATH，并通过正常 WPF EXE 启动；配合 `-AutomaticLocations` 可实际点击环境检查，验证全部自动定位链，没有调用本机 Codex。

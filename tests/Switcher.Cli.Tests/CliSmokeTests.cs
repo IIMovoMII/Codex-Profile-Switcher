@@ -2,6 +2,18 @@ namespace Switcher.Cli.Tests;
 
 public sealed class CliSmokeTests
 {
+    [Theory]
+    [InlineData("-RelayModelCatalogPath", "-MonitorDataDir")]
+    [InlineData("--relay-model-catalog-path", "--monitor-data-dir")]
+    public void Legacy_location_options_are_retained_by_cli_parser(string catalogOption, string monitorOption)
+    {
+        var type = System.Reflection.Assembly.Load("Switcher.Cli").GetType("Switcher.Cli.CliOptions", throwOnError: true)!;
+        var args = new[] { "status", catalogOption, "D:\\synthetic 目录\\catalog.json", monitorOption, "D:\\synthetic monitor" };
+        var parsed = type.GetMethod("Parse")!.Invoke(null, new object[] { args });
+        Assert.Equal(args[2], type.GetProperty("RelayModelCatalogPath")!.GetValue(parsed));
+        Assert.Equal(args[4], type.GetProperty("MonitorDataDirectory")!.GetValue(parsed));
+    }
+
     [Fact]
     public async Task Cli_uses_isolated_paths_hides_api_keys_and_preserves_command_exit_codes()
     {

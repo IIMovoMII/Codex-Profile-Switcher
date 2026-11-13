@@ -1,5 +1,16 @@
 # C# / .NET 10 实施与验证计划
 
+## 当前任务：0.3.13 文件位置兼容与错误分类（进行中）
+
+- 基线 `9b83495`，工作区干净。截图的 0.3.12 报错可由本机安装布局与源码对应：CLI 实际位于 `%LOCALAPPDATA%/OpenAI/Codex/bin/<版本>/codex.exe`，新版仅扫描 Programs 和 PATH，遗漏旧实现已有的 Desktop bin 与 CODEX_CLI_PATH 支持；公开 0.3.12 同样受影响。
+- 新建可注入路径的 C# 发现模块，恢复 Desktop 版本目录优先、根目录和 PATH 回退、显式参数/环境路径；目录不可访问不阻断其他合法候选，不递归扫描整个 Programs。兼容 npm 的原生 CLI 文件，不执行旧脚本或联网探测。
+- 回归：合成目录精确复现旧版漏查、多个 Desktop 版本和失效目录、覆盖优先/隔离、PATH/受限目录回退；用模拟 CLI 验证环境诊断、切换核验和失败回滚。开发不执行本机 Codex、真实登录或账号切换。
+- 逐项位置审计记录在 `docs/zh-CN/PATH_COMPATIBILITY.md`：恢复旧模型目录/维护标记路径参数、分页库识别；位置记录或手动目录被占用时明确读取失败，权限错误不吞成缺失。项目其他版本、分页投影涉及字节偏移但未适配时明确说明并保留数据，不能声称已覆盖这些格式的写入。
+- 环境检查以本地 --version 判断可执行性，无需登录；GUI/CLI 共用查找器。新增正常 EXE、临时 Desktop 安装布局且无显式命令覆盖的前端验证入口，避免测试再次绕过发现层。
+- 本地构建 0 警告/错误；128 项 xUnit（Core 6、Infrastructure 105、Desktop 13、CLI 4）全部通过，无跳过。直接/传递 NuGet 依赖审计无已知漏洞。临时正常 WPF EXE 已实际点击诊断/重新检查，显示临时 Desktop 版本目录 CLI 为“已找到”，仅执行模拟 --version；未进行真实切换。证据位于忽略的 artifacts/test-0.3.13 与 artifacts/ui-0.3.13。
+- 自包含安装包 `dist/0.3.13-release/Codex-Profile-Switcher-Setup-0.3.13.exe` 已生成，45,950,498 字节，SHA-256 `8cf96c3b1673b3741056d1d76838dc6a080c1371da3cfd8485f14b47b90099df`。真实 WSH/CMD 入口与隔离安装（副本 GUI/CLI、旧入口迁移/修改保护、卸载数据留存）通过；没有更改本机真实安装或快捷方式。发布与 GitHub/CI 核验仍在进行。
+- 完成后同步公告和文档，构建/审计/测试、生成 0.3.13 自包含安装包并隔离验证，再发布 GitHub、核验公开更新和 CI。保留现有 0.3.12 发布物与历史。
+
 ## 当前任务：0.3.12 仓库清理与安全修复（已完成）
 
 - 基线为 `9b48383`，开始时工作区干净。保留已有业务、数据格式、固定入口及全部有效功能，不改写 Git 历史。
@@ -23,7 +34,7 @@
 | 完整切换、重新应用、进度、取消、互斥和持久日志 | Core/Switching、Infrastructure/Switching | 同类/跨类档案、计划校验、写前并发检查、写后验证、分阶段恢复和外部修改保护 |
 | 模型、上下文和代理策略、个人偏好 | Core/Configuration、Infrastructure/Configuration | 继承/保留/显式设置、TOML 语法与注释、未知字段、配置及偏好保留 |
 | 手动目录、指定官方账号快照、真实路径与时间 | Infrastructure/Models、Desktop/ProfileEditorViewModel | 官方缓存只读、完整 models 字段、来源隔离、无效缓存留旧快照、手动文件保护 |
-| 共享聊天、增量历史、SQLite/WAL、项目投影 | Infrastructure/History、CodexAdapters | JSONL 字节保留、偏移和数据库投影、无变更不建备份、提交后失败与重启恢复 |
+| 共享聊天、增量历史、SQLite/WAL、项目投影 | Infrastructure/History、CodexAdapters | JSONL 字节保留、已适配数据库投影、无变更不建备份、提交后失败与重启恢复；分页投影偏移改写及非 state_5 项目格式当前保护性停止/跳过 |
 | 账号私有桌面状态与共享项目、个人设置 | CodexAdapters/DesktopStateAdapter | JSON 形状与未知字段、私有/共享状态边界、恢复材料、配置并发保护 |
 | 子进程、超时、取消与环境检查 | Infrastructure/Processes | stdout/stderr 分开、成功 stderr、失败退出码、超时/取消、特殊字符、子进程独立环境 |
 | GitHub 更新与同源公告 | Infrastructure/Updates、Core/Updates | API 限流网页回退、来源限制、超时重试、SHA-256、确认下载/安装、版本 Markdown 嵌入与 Release 一致 |

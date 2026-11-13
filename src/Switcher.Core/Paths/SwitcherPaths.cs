@@ -2,6 +2,8 @@ namespace Switcher.Core.Paths;
 
 public sealed record SwitcherPaths(string CodexHome, string DataDirectory, string? CodexExecutable = null)
 {
+    public string? ManualModelCatalogOverride { get; init; }
+    public string? MonitorDataDirectory { get; init; }
     public string CodexHomeOrigin { get; init; } = "显式指定";
     public string DataDirectoryOrigin { get; init; } = "显式指定";
     public string ConfigFile => Path.Combine(CodexHome, "config.toml");
@@ -11,7 +13,8 @@ public sealed record SwitcherPaths(string CodexHome, string DataDirectory, strin
     public string ProfileCredentialDirectory => Path.Combine(DataDirectory, "profiles");
     public string TransactionFile => Path.Combine(DataDirectory, "transaction.dpapi");
     public string ModelCatalogDirectory => Path.Combine(DataDirectory, "model-catalogs");
-    public string DefaultManualModelCatalogFile => Path.Combine(DataDirectory, "relay-models.json");
+    public string DefaultManualModelCatalogFile => string.IsNullOrWhiteSpace(ManualModelCatalogOverride)
+        ? Path.Combine(DataDirectory, "relay-models.json") : Path.GetFullPath(Environment.ExpandEnvironmentVariables(ManualModelCatalogOverride));
     public string SettingsFile => Path.Combine(DataDirectory, "settings.json");
     public string OperationLogFile => Path.Combine(DataDirectory, "operations.jsonl");
     public string HistoryReadyFile => Path.Combine(DataDirectory, "history-compat-ready.json");

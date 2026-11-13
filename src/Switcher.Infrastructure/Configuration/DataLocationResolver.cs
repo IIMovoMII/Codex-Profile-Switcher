@@ -33,9 +33,12 @@ public sealed class DataLocationResolver
     {
         // Explicit launch arguments are authoritative, including in isolated tests. Never escape them to a real profile.
         var explicitData = dataDirectory is not null; var explicitHome = codexHome is not null;
-        var saved = explicitData || explicitHome ? (Home: "", Data: "") : ReadRemembered();
         var defaultData = Path.Combine(Get("LOCALAPPDATA", Path.Combine(UserDirectory, "AppData", "Local")), "CodexProfileSwitcher");
         var defaultHome = Path.Combine(UserDirectory, ".codex");
+        (string Home, string Data) saved;
+        try { saved = explicitData || explicitHome ? ("", "") : ReadRemembered(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { return new(new(defaultHome, defaultData, codexExecutable), "已保存的数据位置记录无法读取；请检查文件权限或占用情况。原文件已保留，不会按首次安装创建空目录。", true); }
         var dataCandidates = new List<(string Path, string Origin, bool Create)>();
         if (explicitData) dataCandidates.Add((dataDirectory!, "启动参数 --data-dir", true));
         else
@@ -99,13 +102,13 @@ public sealed class DataLocationResolver
     {
         try
         {
-            if (!File.Exists(LocatorFile) || new FileInfo(LocatorFile).Length > 16384) return ("", "");
+            if (!new PhysicalSwitcherFileSystem().FileExists(LocatorFile) || new FileInfo(LocatorFile).Length > 16384) return ("", "");
             using var document = JsonDocument.Parse(File.ReadAllBytes(LocatorFile)); var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("version", out var version) || version.GetInt32() != 1) return ("", "");
             string Read(string name) => root.TryGetProperty(name, out var node) && node.ValueKind == JsonValueKind.String ? node.GetString() ?? "" : "";
             return (Read("codex_home"), Read("data_directory"));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException) { return ("", ""); }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) { return ("", ""); }
     }
 
     private (string Path, string Origin, string? Error, bool Skipped) Select(IEnumerable<(string Path, string Origin, bool Create)> candidates)
@@ -136,7 +139,7 @@ public sealed class DataLocationResolver
     private static string? ReadRegistryHome(string directory)
     {
         var path = Path.Combine(directory, "profiles.json");
-        if (!File.Exists(path)) return null;
+        if (!new PhysicalSwitcherFileSystem().FileExists(path)) return null;
         using var document = JsonDocument.Parse(File.ReadAllBytes(path));
         if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("codex_home", out var home) || home.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(home.GetString()) || !Path.IsPathFullyQualified(home.GetString()!))
             throw new InvalidDataException("档案缺少有效的 CODEX_HOME 绑定。");
@@ -150,12 +153,13 @@ public sealed class DataLocationResolver
         try
         {
             if (create) Directory.CreateDirectory(path);
-            if (!Directory.Exists(path)) return "目录不存在或所在磁盘不可用";
+            if ((File.GetAttributes(path) & FileAttributes.Directory) == 0) return "路径存在，但指向文件而不是文件夹";
             using var entries = Directory.EnumerateFileSystemEntries(path).GetEnumerator(); entries.MoveNext();
             using var probe = new FileStream(Path.Combine(path, ".switcher-access-" + Guid.NewGuid().ToString("N") + ".tmp"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
             return null;
         }
         catch (UnauthorizedAccessException) { return "没有读写权限"; }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return "目录不存在或所在磁盘不可用"; }
         catch (IOException) { return "目录或磁盘不可读写"; }
         catch (ArgumentException) { return "路径格式无效"; }
     }

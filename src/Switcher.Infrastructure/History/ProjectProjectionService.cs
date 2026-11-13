@@ -31,7 +31,10 @@ public sealed class ProjectProjectionService(ISwitcherFileSystem files, Switcher
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!files.FileExists(paths.ProjectStateDatabase))
-            return new ProjectProjectionSummary(false, "项目归属投影：找不到 state_5.sqlite，未做修改。", 0, 0, 0, "");
+            return new ProjectProjectionSummary(false,
+                Directory.Exists(paths.CodexHome) && Directory.EnumerateFiles(paths.CodexHome, "state_*.sqlite", SearchOption.TopDirectoryOnly).Any()
+                    ? "项目归属投影：发现其他版本的状态数据库；当前仅适配 state_5.sqlite，未修改未适配的数据。"
+                    : "项目归属投影：当前 Codex 目录中没有 state_5.sqlite，未做修改。", 0, 0, 0, "");
 
         if (repair) RecoverPendingManifests(cancellationToken);
         progress?.Report(new SwitchProgress("项目归属检查", "正在读取项目、线程与 Desktop 归属元数据。", 8));

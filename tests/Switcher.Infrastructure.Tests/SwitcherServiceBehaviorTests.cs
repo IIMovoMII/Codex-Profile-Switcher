@@ -12,6 +12,7 @@ using Switcher.Infrastructure.Models;
 using Switcher.Infrastructure.Profiles;
 using Switcher.Infrastructure.Security;
 using Switcher.Infrastructure.Switching;
+using Switcher.Infrastructure.Processes;
 
 namespace Switcher.Infrastructure.Tests;
 
@@ -133,6 +134,52 @@ public sealed class SwitcherServiceBehaviorTests
         Assert.Equal(CreateApiAuth("key-target"), fixture.Files.ReadAllText(fixture.Paths.AuthFile));
         Assert.Equal(target.Id, fixture.Registry.Load().ActiveApiProfileId);
         Assert.Null(result.History);
+    }
+
+    [Fact]
+    public async Task Discovered_desktop_cli_is_used_by_the_actual_post_write_verification_without_a_path_override()
+    {
+        using var fixture = new Fixture();
+        var api = fixture.Management.AddApi(new AddApiProfile("API discovery", "https://discovery.example.invalid", "synthetic-key"));
+        var oldAuth = CreateOfficialAuth("discovery");
+        fixture.Files.WriteAtomic(fixture.Paths.AuthFile, Encoding.UTF8.GetBytes(oldAuth));
+        fixture.Files.WriteAtomic(fixture.Paths.ConfigFile, "model_provider = \"openai\"\n"u8);
+        var local = Path.Combine(fixture.Root, "local");
+        var executable = Path.Combine(local, "OpenAI", "Codex", "bin", "current-build", "codex.exe");
+        fixture.Files.WriteAtomic(executable, "mock file, never execute"u8);
+        var runner = new VerifyingRunner(request =>
+        {
+            Assert.Equal(executable, request.FileName);
+            Assert.Equal(new[] { "login", "status" }, request.Arguments);
+            Assert.Equal(fixture.Paths.CodexHome, request.Environment!["CODEX_HOME"]);
+            Assert.Equal(CreateApiAuth("synthetic-key"), fixture.Files.ReadAllText(fixture.Paths.AuthFile));
+            Assert.Equal("https://discovery.example.invalid", fixture.Config.GetTopLevel(fixture.Files.ReadAllText(fixture.Paths.ConfigFile), "openai_base_url"));
+        });
+        var runtime = new CodexRuntime(runner, fixture.Paths, executableResolver: new(new(local, Path.Combine(fixture.Root, "roaming"), "")));
+        fixture.Runtime.Verification = runtime.VerifyAuthenticationAsync;
+        var result = await fixture.Service.SwitchAsync(ProfileKind.Api, api.Id, quick: true);
+        Assert.Equal(api.Id, result.TargetProfileId); Assert.Equal(1, runner.Calls);
+        Assert.False(fixture.Files.FileExists(fixture.Paths.TransactionFile));
+    }
+
+    [Fact]
+    public async Task Missing_cli_during_real_runtime_verification_restores_credentials_config_and_registry_pointer()
+    {
+        using var fixture = new Fixture();
+        var old = fixture.Management.AddApi(new AddApiProfile("API old", "https://old.example.invalid", "old-key"));
+        var target = fixture.Management.AddApi(new AddApiProfile("API target", "https://target.example.invalid", "target-key"));
+        var registry = fixture.Registry.Load(); registry.ActiveApiProfileId = old.Id; fixture.Registry.Save(registry);
+        var oldAuth = Encoding.UTF8.GetBytes(CreateApiAuth("old-key"));
+        var oldConfig = "# keep\nmodel_provider = \"relay\"\nopenai_base_url = \"https://old.example.invalid\"\nmodel = \"user-choice\"\n"u8.ToArray();
+        fixture.Files.WriteAtomic(fixture.Paths.AuthFile, oldAuth); fixture.Files.WriteAtomic(fixture.Paths.ConfigFile, oldConfig);
+        var runner = new VerifyingRunner(_ => throw new InvalidOperationException("No process may run"));
+        var runtime = new CodexRuntime(runner, fixture.Paths, executableResolver: new(new(Path.Combine(fixture.Root, "empty-local"), null, "")));
+        fixture.Runtime.Verification = runtime.VerifyAuthenticationAsync;
+        await Assert.ThrowsAsync<FileNotFoundException>(() => fixture.Service.SwitchAsync(ProfileKind.Api, target.Id, quick: true));
+        Assert.Equal(oldAuth, fixture.Files.ReadAllBytes(fixture.Paths.AuthFile));
+        Assert.Equal(oldConfig, fixture.Files.ReadAllBytes(fixture.Paths.ConfigFile));
+        Assert.Equal(old.Id, fixture.Registry.Load().ActiveApiProfileId);
+        Assert.False(fixture.Files.FileExists(fixture.Paths.TransactionFile)); Assert.Equal(0, runner.Calls);
     }
 
     [Fact]
@@ -260,12 +307,14 @@ public sealed class SwitcherServiceBehaviorTests
 
     private sealed class TestCodexRuntime(ISwitcherFileSystem files, SwitcherPaths paths) : ICodexRuntime
     {
+        public Func<ProfileKind, CancellationToken, string?, Task>? Verification { get; set; }
         public bool FailVerification { get; set; }
         public Exception LoginFailure { get; set; } = new InvalidOperationException("interactive login must not run in tests");
         public Task<IReadOnlyList<string>> FindRunningProcessNamesAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<string>>([]);
         public Task<bool> IsAvailableAsync(CancellationToken cancellationToken) => Task.FromResult(true);
         public Task VerifyAuthenticationAsync(ProfileKind expectedKind, CancellationToken cancellationToken, string? codexHome = null)
         {
+            if (Verification is not null) return Verification(expectedKind, cancellationToken, codexHome);
             if (FailVerification) throw new InvalidOperationException("synthetic verification failure");
             var currentHome = codexHome ?? paths.CodexHome;
             var auth = files.ReadAllText(Path.Combine(currentHome, "auth.json"));
@@ -276,6 +325,15 @@ public sealed class SwitcherServiceBehaviorTests
         public void EnsureNoAuthenticationOverrides() { }
         public IReadOnlyList<string> GetAuthenticationOverrides() => [];
         public IReadOnlyDictionary<string, string?> GetProcessEnvironment() => new Dictionary<string, string?>();
+    }
+
+    private sealed class VerifyingRunner(Action<ProcessRequest> verify) : IProcessRunner
+    {
+        public int Calls { get; private set; }
+        public Task<ProcessResult> RunAsync(ProcessRequest request, CancellationToken cancellationToken)
+        {
+            Calls++; verify(request); return Task.FromResult(new ProcessResult(0, "Logged in using an API key", "", false));
+        }
     }
 
     private sealed class EmptyDesktopStatePlanner : IDesktopStatePlanner

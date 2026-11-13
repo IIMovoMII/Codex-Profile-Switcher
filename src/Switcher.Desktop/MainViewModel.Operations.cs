@@ -60,12 +60,13 @@ public sealed partial class MainViewModel
         var rows = new List<EnvironmentRow>();
         var result = await RunOperationAsync("环境检查", async token =>
         {
-            var available = await _host.Runtime.IsAvailableAsync(token);
+            var command = await _host.Runtime.InspectAsync(token);
             var running = await _host.Runtime.FindRunningProcessNamesAsync(token);
             var overrides = _host.Runtime.GetAuthenticationOverrides();
             var lockBusy = await IsOperationLockBusyAsync(token);
             var recovery = _host.HasPendingRecovery;
-            rows.Add(new("terminal", "Codex 命令", available ? "已找到" : "尚未确认", available ? "Codex 命令可执行" : "检查安装路径；仍可维护本地档案", !available));
+            rows.Add(new("terminal", "Codex 命令", command.CanRun ? "已找到" : command.Found ? "已找到，待处理" : "需要处理",
+                (command.ExecutablePath.Length > 0 ? command.ExecutablePath + " · " : "") + command.Message, !command.CanRun));
             rows.Add(new("layers", "Codex 进程", running.Count == 0 ? "已退出" : "仍在运行", running.Count == 0 ? "可执行账号切换" : $"发现 {running.Count} 个进程，退出后可切换账号", running.Count > 0));
             rows.Add(new("folder", "数据目录", Directory.Exists(DataDirectory) ? "可访问" : "尚未创建", DataDirectory));
             rows.Add(new("clock", "未完成操作", recovery ? "需要恢复" : "未发现", recovery ? "下一次业务操作将先执行安全恢复" : "没有待恢复的切换记录", recovery));

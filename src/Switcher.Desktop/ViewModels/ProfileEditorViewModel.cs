@@ -120,9 +120,8 @@ public sealed partial class ProfileEditorViewModel : ObservableObject
             {
                 var path = mode == "official" ? string.IsNullOrWhiteSpace(source) ? "" : Path.Combine(_host.Paths.ModelCatalogDirectory, source + ".json")
                     : Path.GetFullPath(Environment.ExpandEnvironmentVariables(string.IsNullOrWhiteSpace(manual) ? _host.Paths.DefaultManualModelCatalogFile : manual));
-                var exists = !string.IsNullOrWhiteSpace(path) && File.Exists(path);
-                var models = exists ? CatalogChoiceReader.Read(path) : [];
-                return (path, exists, models, updated: exists ? File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm") : "尚无有效目录");
+                var details = CatalogChoiceReader.Inspect(path);
+                return (path, exists: details.Exists, models: details.Models, updated: details.Updated?.ToString("yyyy-MM-dd HH:mm") ?? "尚无有效目录");
             });
             if (generation != _catalogGeneration) return;
             ResolvedCatalogPath = result.path; CatalogExists = result.exists; CatalogUpdated = result.updated;

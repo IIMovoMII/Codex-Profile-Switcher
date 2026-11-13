@@ -11,6 +11,21 @@ namespace Switcher.Infrastructure.Tests;
 public sealed class ProjectProjectionBehaviorTests
 {
     [Fact]
+    public async Task Other_database_version_is_reported_as_found_but_unsupported_and_is_never_modified()
+    {
+        using var fixture = new Fixture();
+        Directory.CreateDirectory(fixture.Paths.CodexHome);
+        var database = Path.Combine(fixture.Paths.CodexHome, "state_99.sqlite");
+        var original = "synthetic future format"u8.ToArray(); File.WriteAllBytes(database, original);
+        var result = await fixture.Service.PrepareAsync(null, repair: true, inferFromWorkingDirectory: false, null, CancellationToken.None);
+        Assert.False(result.Changed);
+        Assert.Contains("发现其他版本", result.Message);
+        Assert.Contains("未修改", result.Message);
+        Assert.Equal(original, File.ReadAllBytes(database));
+        Assert.False(Directory.Exists(fixture.Paths.ProjectBackupsDirectory));
+    }
+
+    [Fact]
     public async Task Owner_scoped_assignments_are_projected_separately_and_database_backup_is_valid()
     {
         using var fixture = new Fixture();

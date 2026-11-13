@@ -16,7 +16,7 @@
 
 从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载 `Codex-Profile-Switcher-Setup-版本.exe`。安装器面向当前 Windows 用户，不要求管理员权限。安装时可选择创建桌面快捷方式；桌面和开始菜单快捷方式都使用固定启动入口。
 
-当前稳定版为 **[0.3.12](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.12)**，修复 SQLite 依赖安全告警并清理旧实现，保留青绿色 WPF 界面、模型目录、聊天共享和全部现有功能。完整内容见 [0.3.12 更新公告](docs/zh-CN/releases/0.3.12.md)，应用内使用相同公告。0.2.x 是旧版 PowerShell 程序。
+当前稳定版为 **[0.3.13](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.13)**，修复 Codex 已安装却找不到命令的问题，补齐旧版的位置兼容并区分文件缺失、访问失败和格式未适配。完整内容见 [0.3.13 更新公告](docs/zh-CN/releases/0.3.13.md)，应用内使用相同公告。0.2.x 是旧版 PowerShell 程序。
 
 安装和卸载向导使用简体中文，安装包自带 .NET 10 运行时。日常运行不需要 .NET SDK、PowerShell、Python、Node.js 或额外 SQLite 安装。
 
@@ -39,6 +39,8 @@
 1. 安装并打开“Codex 账号切换”。
 2. 已有登录信息时选择“导入当前账号”；也可以添加官方账号或 API 档案。
 3. 切换前退出 Codex Desktop 和 Codex CLI；切换完成后重新启动 Codex。
+
+“诊断与维护 → 重新检查”显示实际 Codex CLI 路径。自动查找覆盖 Desktop bin 版本目录、PATH、npm 原生程序及已知 Programs/Codex 布局；自定义安装可通过 `CODEX_CLI_PATH` 或 `--codex-exe` 指定原生 EXE。查找顺序和其他文件类别的兼容范围见[位置兼容说明](docs/zh-CN/PATH_COMPATIBILITY.md)。
 
 图形界面通过根目录固定入口 `CodexProfileSwitcher.vbs` 启动。`Codex切换.vbs` 和 `start.vbs` 保留为兼容入口；`codex-switcher.cmd` 提供命令行程序。升级会更新固定入口的路径指针，不更换快捷方式目标。
 
@@ -77,4 +79,4 @@ dotnet test .\CodexProfileSwitcher.sln
 
 构建安装包需要 .NET 10 SDK 和 Inno Setup 6。安装器采用自包含 Windows x64 发布，不启用 trimming 或 NativeAOT。功能映射、关键决定和隔离验证状态见 [REFACTOR_PLAN.md](REFACTOR_PLAN.md)；贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-当前源码版本为 **0.3.12**。隔离测试不等于真实账号登录、真实 API 使用或跨机器验证。项目采用 [MIT License](LICENSE.txt)。
+当前源码版本为 **0.3.13**。隔离测试不等于真实账号登录、真实 API 使用或跨机器验证。项目采用 [MIT License](LICENSE.txt)。

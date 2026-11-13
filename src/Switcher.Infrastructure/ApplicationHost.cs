@@ -91,8 +91,9 @@ public sealed class ApplicationHost
         var projects = new ProjectProjectionService(files, paths, protector);
         var desktopState = new DesktopStateAdapter(files, protector, paths);
         var operationLock = new WindowsOperationLock();
+        var coordinatedLock = new MaintenanceCoordinatedLock(operationLock, files, paths);
         var operationHistory = new OperationHistoryStore(files, paths);
-        var service = new SwitcherService(paths, files, operationLock, executor, repository, classifier,
+        var service = new SwitcherService(paths, files, coordinatedLock, executor, repository, classifier,
             profileManagement, config, runtime, desktopState, catalogs, projects, history);
         return new ApplicationHost(paths, service, profileManagement, registryStore, catalogs, projects, runtime, config,
             operationLock, operationHistory, history, files);
