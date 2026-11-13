@@ -1,6 +1,6 @@
 # C# / .NET 10 实施与验证计划
 
-## 当前任务：0.3.13 文件位置兼容与错误分类（进行中）
+## 当前任务：0.3.13 文件位置兼容与错误分类（已完成）
 
 - 基线 `9b83495`，工作区干净。截图的 0.3.12 报错可由本机安装布局与源码对应：CLI 实际位于 `%LOCALAPPDATA%/OpenAI/Codex/bin/<版本>/codex.exe`，新版仅扫描 Programs 和 PATH，遗漏旧实现已有的 Desktop bin 与 CODEX_CLI_PATH 支持；公开 0.3.12 同样受影响。
 - 新建可注入路径的 C# 发现模块，恢复 Desktop 版本目录优先、根目录和 PATH 回退、显式参数/环境路径；目录不可访问不阻断其他合法候选，不递归扫描整个 Programs。兼容 npm 的原生 CLI 文件，不执行旧脚本或联网探测。
@@ -8,8 +8,9 @@
 - 逐项位置审计记录在 `docs/zh-CN/PATH_COMPATIBILITY.md`：恢复旧模型目录/维护标记路径参数、分页库识别；位置记录或手动目录被占用时明确读取失败，权限错误不吞成缺失。项目其他版本、分页投影涉及字节偏移但未适配时明确说明并保留数据，不能声称已覆盖这些格式的写入。
 - 环境检查以本地 --version 判断可执行性，无需登录；GUI/CLI 共用查找器。新增正常 EXE、临时 Desktop 安装布局且无显式命令覆盖的前端验证入口，避免测试再次绕过发现层。
 - 本地构建 0 警告/错误；128 项 xUnit（Core 6、Infrastructure 105、Desktop 13、CLI 4）全部通过，无跳过。直接/传递 NuGet 依赖审计无已知漏洞。临时正常 WPF EXE 已实际点击诊断/重新检查，显示临时 Desktop 版本目录 CLI 为“已找到”，仅执行模拟 --version；未进行真实切换。证据位于忽略的 artifacts/test-0.3.13 与 artifacts/ui-0.3.13。
-- 自包含安装包 `dist/0.3.13-release/Codex-Profile-Switcher-Setup-0.3.13.exe` 已生成，45,950,498 字节，SHA-256 `8cf96c3b1673b3741056d1d76838dc6a080c1371da3cfd8485f14b47b90099df`。真实 WSH/CMD 入口与隔离安装（副本 GUI/CLI、旧入口迁移/修改保护、卸载数据留存）通过；没有更改本机真实安装或快捷方式。发布与 GitHub/CI 核验仍在进行。
-- 完成后同步公告和文档，构建/审计/测试、生成 0.3.13 自包含安装包并隔离验证，再发布 GitHub、核验公开更新和 CI。保留现有 0.3.12 发布物与历史。
+- 自包含安装包 `dist/0.3.13-release/Codex-Profile-Switcher-Setup-0.3.13.exe` 已生成，45,950,498 字节，SHA-256 `8cf96c3b1673b3741056d1d76838dc6a080c1371da3cfd8485f14b47b90099df`。283 项发布清单、15 项静态文件与源码逐项匹配。真实 WSH/CMD 入口与隔离安装（副本 GUI/CLI、旧入口迁移/修改保护、卸载数据留存）通过；没有更改本机真实安装或快捷方式。
+- [0.3.13 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.13) 已公开，源码/标签目标 `1c4fe5f0889838cec05ee6b5e0c6822854601db1`，远端分支、标签及解引用 SHA 与本地一致。GitHub 两项附件大小/digest 和公告与本地相同，CI 没有覆盖已验收附件。
+- [CI 43402804223](https://github.com/IIMovoMII/Codex-Profile-Switcher/actions/runs/43402804223) 的全新 Windows 构建、128 项测试、WSH/CMD、打包及隔离安装全部成功；无 NU190x、Node 20 或 warning 注释，annotations 为 0。当前 C# 更新服务在 9.33 秒内回退系统代理 GitHub API 403，旧 0.3.12 检测到 0.3.13，公告一致；实际回下载完整公开安装器与 SHA-256 匹配，单独回下载的校验附件字节也一致。证据位于忽略的 artifacts/release-0.3.13。保留 0.3.12 发布物与历史。
 
 ## 当前任务：0.3.12 仓库清理与安全修复（已完成）
 
