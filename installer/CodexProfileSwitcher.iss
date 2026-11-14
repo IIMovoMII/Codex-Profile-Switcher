@@ -43,9 +43,9 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Source: "{#SourceDir}\CodexProfileSwitcher.vbs"; DestDir: "{code:GetLauncherDirectory}"; DestName: "CodexProfileSwitcher.vbs"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
-Name: "{autoprograms}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; WorkingDir: "{code:GetLauncherDirectory}"
-Name: "{autodesktop}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; WorkingDir: "{code:GetLauncherDirectory}"; Tasks: desktopicon
-Name: "{autoprograms}\卸载 Codex 账号切换"; Filename: "{uninstallexe}"
+Name: "{code:GetShortcutDirectory|startmenu}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; WorkingDir: "{code:GetLauncherDirectory}"
+Name: "{code:GetShortcutDirectory|desktop}\Codex 账号切换"; Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; WorkingDir: "{code:GetLauncherDirectory}"; Tasks: desktopicon
+Name: "{code:GetShortcutDirectory|startmenu}\卸载 Codex 账号切换"; Filename: "{uninstallexe}"
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; Description: "启动 Codex 账号切换"; WorkingDir: "{code:GetLauncherDirectory}"; Flags: nowait postinstall skipifsilent unchecked
@@ -79,6 +79,16 @@ begin
   Result := ExpandConstant('{param:SWITCHERLAUNCHERDIR|}');
   if Result = '' then
     Result := ExpandConstant('{localappdata}\CodexProfileSwitcher\Launcher');
+end;
+
+function GetShortcutDirectory(Kind: String): String;
+begin
+  if ExpandConstant('{param:SWITCHERTESTID|}') <> '' then
+    Result := AddBackslash(ExpandConstant('{app}')) + 'test-shortcuts\' + Kind
+  else if Kind = 'desktop' then
+    Result := ExpandConstant('{autodesktop}')
+  else
+    Result := ExpandConstant('{autoprograms}');
 end;
 
 function GetLauncherFile(Param: String): String;

@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$LegacySetupPath,
@@ -13,6 +13,11 @@ foreach ($path in @($legacySetup, $currentSetup)) {
     if (-not [IO.File]::Exists($path)) { throw "Installer not found: $path" }
 }
 
+. (Join-Path $PSScriptRoot 'installer-test-isolation.ps1')
+Assert-TestInstallerIsolated $legacySetup
+Assert-TestInstallerIsolated $currentSetup
+$userShortcuts = Get-UserShortcutSnapshot
+
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempRoot ('CodexSwitcherLegacyUpgradeTest-' + [Guid]::NewGuid().ToString('N'))
 if (-not $testRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Test root escaped the system temporary directory.' }
@@ -22,17 +27,19 @@ $uninstaller = Join-Path $installRoot 'unins000.exe'
 [void][IO.Directory]::CreateDirectory($installRoot)
 [void][IO.Directory]::CreateDirectory($launcherRoot)
 $uninstalled = $false
+$testInstallId = [Guid]::NewGuid().ToString('N')
 
 function Quote-WindowsArgument([string]$Value) {
     return '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"$', '$1$1\"'), '(\\+)$', '$1$1') + '"'
 }
 
 function Invoke-IsolatedInstall([string]$SetupPath) {
-    $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=' + (Quote-WindowsArgument $installRoot) +
-        ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot)
+    $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon /DIR=' + (Quote-WindowsArgument $installRoot) +
+        ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot) + ' /SWITCHERTESTID=' + $testInstallId
     $process = Start-Process -FilePath $SetupPath -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     try { if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)." } }
     finally { $process.Dispose() }
+    Assert-UserShortcutsUnchanged $userShortcuts
 }
 
 function Get-InstalledPowerShellFiles {
@@ -72,6 +79,7 @@ try {
     try { if ($process.ExitCode -ne 0) { throw "Uninstaller exited with code $($process.ExitCode)." } }
     finally { $process.Dispose() }
     $uninstalled = $true
+    Assert-UserShortcutsUnchanged $userShortcuts
 
     [pscustomobject]@{
         LegacyPowerShellFileCount = $beforeUpgrade.Count
@@ -97,4 +105,5 @@ finally {
     elseif ([IO.Directory]::Exists($testRoot)) {
         Write-Warning "Temporary upgrade test files retained at $testRoot because validation or uninstall did not finish."
     }
+    Assert-UserShortcutsUnchanged $userShortcuts
 }

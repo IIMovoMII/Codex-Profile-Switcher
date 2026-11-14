@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$SetupPath,
@@ -13,6 +13,10 @@ if (-not [IO.File]::Exists($checksumFile)) { throw 'Installer checksum file is m
 $checksumText = [IO.File]::ReadAllText($checksumFile)
 if ($checksumText -notmatch '^(?<hash>[a-f0-9]{64})\s+') { throw 'Installer checksum file is invalid.' }
 if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Matches.hash) { throw 'Installer SHA-256 does not match.' }
+
+. (Join-Path $PSScriptRoot 'installer-test-isolation.ps1')
+Assert-TestInstallerIsolated $setup
+$userShortcuts = Get-UserShortcutSnapshot
 
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $testRoot = Join-Path $tempRoot ('CodexSwitcherInstallTest-' + [Guid]::NewGuid().ToString('N'))
@@ -34,11 +38,31 @@ function Quote-WindowsArgument([string]$Value) {
 }
 
 function Invoke-IsolatedInstall {
-    $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /DIR=' + (Quote-WindowsArgument $installRoot) +
+    $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=desktopicon /DIR=' + (Quote-WindowsArgument $installRoot) +
         ' /SWITCHERLAUNCHERDIR=' + (Quote-WindowsArgument $launcherRoot) + ' /SWITCHERTESTID=' + $testInstallId
     $process = Start-Process -FilePath $setup -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     try { if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)." } }
     finally { $process.Dispose() }
+    Assert-UserShortcutsUnchanged $userShortcuts
+    Assert-IsolatedShortcuts
+}
+
+function Assert-IsolatedShortcuts {
+    $shell = New-Object -ComObject WScript.Shell
+    $expectedLauncher = '"' + (Join-Path $launcherRoot 'CodexProfileSwitcher.vbs') + '"'
+    foreach ($kind in @('desktop', 'startmenu')) {
+        $path = Join-Path $installRoot ('test-shortcuts\' + $kind + '\Codex 账号切换.lnk')
+        if (-not [IO.File]::Exists($path)) { throw "Isolated $kind shortcut was not created." }
+        $shortcut = $shell.CreateShortcut($path)
+        if ($shortcut.TargetPath -ine (Join-Path $env:SystemRoot 'System32\wscript.exe') -or
+            $shortcut.Arguments -cne $expectedLauncher -or $shortcut.WorkingDirectory -cne $launcherRoot) {
+            throw "Isolated $kind shortcut does not target the temporary fixed launcher."
+        }
+    }
+    $uninstallPath = Join-Path $installRoot 'test-shortcuts\startmenu\卸载 Codex 账号切换.lnk'
+    if (-not [IO.File]::Exists($uninstallPath) -or $shell.CreateShortcut($uninstallPath).TargetPath -cne $uninstaller) {
+        throw 'Isolated uninstall shortcut does not target the temporary uninstaller.'
+    }
 }
 
 function Assert-InstalledManifest {
@@ -46,7 +70,7 @@ function Assert-InstalledManifest {
     if ((Get-ItemProperty -LiteralPath $testUninstallKey).DisplayVersion -cne $expectedVersion) { throw 'Installed registration did not record the current version.' }
     $manifestPath = Join-Path $installRoot 'SHA256.json'
     if (-not [IO.File]::Exists($manifestPath)) { throw 'Installed SHA256.json is missing.' }
-    $manifest = @([IO.File]::ReadAllText($manifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json)
+    $manifest = @([IO.File]::ReadAllText($manifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json | ForEach-Object { $_ })
     $seen = @{}
     foreach ($entry in $manifest) {
         $relative = ([string]$entry.path).Replace('/', '\')
@@ -173,10 +197,6 @@ try {
     if ([IO.File]::ReadAllText($pointer).Trim() -cne $installRoot) { throw 'Fixed launcher points outside the temporary installation.' }
     if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $installRoot 'CodexProfileSwitcher.vbs') -Algorithm SHA256).Hash) { throw 'New installation did not create the fixed launcher from the published launcher.' }
     $installerSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\installer\CodexProfileSwitcher.iss'))
-    if (-not $installerSource.Contains('Name: "desktopicon";') -or
-        -not $installerSource.Contains('Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; WorkingDir: "{code:GetLauncherDirectory}"; Tasks: desktopicon')) {
-        throw 'Optional desktop shortcut does not target the fixed launcher.'
-    }
     if (-not $installerSource.Contains('Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"')) {
         throw 'Installer does not configure Simplified Chinese.'
     }
@@ -222,8 +242,14 @@ try {
     if (-not [IO.File]::Exists($retainedMarker)) { throw 'Uninstall removed the temporary app data marker.' }
     if (-not [IO.Directory]::Exists($codexHome)) { throw 'Uninstall removed the temporary CODEX_HOME.' }
     if (-not [IO.File]::Exists((Join-Path $launcherRoot 'CodexProfileSwitcher.vbs'))) { throw 'Uninstall removed the fixed launcher.' }
+    foreach ($kind in @('desktop', 'startmenu')) {
+        if ([IO.File]::Exists((Join-Path $installRoot ('test-shortcuts\' + $kind + '\Codex 账号切换.lnk')))) {
+            throw 'Uninstall left an isolated application shortcut behind.'
+        }
+    }
+    Assert-UserShortcutsUnchanged $userShortcuts
 
-    Write-Output 'Installer integration passed: checksum, isolated install, self-contained payload, CLI, WPF startup/close, fixed launcher, upgrade preservation, uninstall, and data retention.'
+    Write-Output 'Installer integration passed: checksum, isolated install and shortcuts, real desktop/Start Menu unchanged, self-contained payload, CLI, WPF startup/close, fixed launcher, upgrade preservation, uninstall, and data retention.'
 }
 finally {
     if (-not $uninstalled -and [IO.File]::Exists($uninstaller)) {
@@ -241,4 +267,5 @@ finally {
     elseif ([IO.Directory]::Exists($testRoot)) {
         Write-Warning "Temporary installation test files retained at $testRoot because validation or uninstall did not finish."
     }
+    Assert-UserShortcutsUnchanged $userShortcuts
 }

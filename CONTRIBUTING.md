@@ -35,7 +35,9 @@
 
 真实账号试用、跨机器验证与隔离测试是不同验证边界；报告时应分别说明，不得声称执行过未运行的项目。
 
-`tests/test-installer.ps1` 使用独立临时安装目录、启动器、CODEX_HOME、数据目录和每次随机的安装登记标识；不创建真实快捷方式。安装副本必须能正常启动和关闭 WPF，再验证旧入口备份迁移、卸载和运行数据留存。
+`tests/test-installer.ps1` 使用独立临时安装目录、启动器、CODEX_HOME、数据目录和每次随机的安装登记标识；测试的桌面及开始菜单快捷方式也放入临时安装目录，安装、升级及卸载前后核对真实快捷方式字节不变。`/NOICONS` 不隔离 `{autodesktop}` / `{autoprograms}`，不得依赖它保护真实入口。安装副本必须能正常启动和关闭 WPF，再验证旧入口备份迁移、卸载和运行数据留存。
+
+安装测试只运行当前源码构建且具有快捷方式隔离凭证的包；`build-installer.ps1` 将凭证写入忽略的 `artifacts/installer-test-proofs`，按安装器及 Inno 源码 SHA-256 核对，不加入分发包。没有凭证的历史安装器只在可丢弃虚拟机中执行，两个安装测试入口均在启动旧包前拒绝运行。
 
 更新连接、目录定位与保留策略集中在 `GitHubUpdateService`、`DataLocationResolver` 和 `StorageMaintenanceService`。更新测试使用模拟 HTTP，定位测试注入临时环境和访问错误，清理测试覆盖恢复依赖、旧版清单、外部路径和未完成操作；不要用真实运行数据做清理验收。GUI 预览可运行 `tests/start-frontend-preview.ps1 -DotNetPath <SDK路径> -AutomaticLocations`，使用临时环境验证默认定位。
 

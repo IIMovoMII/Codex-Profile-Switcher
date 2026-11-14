@@ -171,6 +171,18 @@ try {
     if ([IO.File]::Exists($pointerPath)) { [IO.File]::Move($pointerTemporary, $pointerPath, $true) }
     else { [IO.File]::Move($pointerTemporary, $pointerPath) }
 
+    # Local build proof: tests must reject older installers that can touch real shell shortcuts.
+    # This is development metadata, never a release asset or part of the installed payload.
+    $proofDirectory = Join-Path $PSScriptRoot 'artifacts\installer-test-proofs'
+    [void][IO.Directory]::CreateDirectory($proofDirectory)
+    $proof = [ordered]@{
+        schemaVersion = 1
+        capability = 'isolated-shortcuts-v1'
+        installerSha256 = $setupHash
+        installerSourceSha256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'installer\CodexProfileSwitcher.iss') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    [IO.File]::WriteAllText((Join-Path $proofDirectory ($setupHash + '.json')), (ConvertTo-Json $proof), $encoding)
+
     Write-Output "发布目录：$releasePublishDirectory"
     Write-Output "安装包：$setupPath"
     Write-Output "SHA-256：$checksumPath"
