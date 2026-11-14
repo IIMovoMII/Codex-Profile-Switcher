@@ -42,6 +42,8 @@ function Invoke-IsolatedInstall {
 }
 
 function Assert-InstalledManifest {
+    $expectedVersion = ([IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\version.txt'))).Trim()
+    if ((Get-ItemProperty -LiteralPath $testUninstallKey).DisplayVersion -cne $expectedVersion) { throw 'Installed registration did not record the current version.' }
     $manifestPath = Join-Path $installRoot 'SHA256.json'
     if (-not [IO.File]::Exists($manifestPath)) { throw 'Installed SHA256.json is missing.' }
     $manifest = @([IO.File]::ReadAllText($manifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json)
@@ -96,12 +98,17 @@ function Invoke-IsolatedCli {
     if ([IO.File]::Exists((Join-Path $codexHome 'auth.json')) -or [IO.File]::Exists((Join-Path $codexHome 'config.toml'))) { throw 'CLI status unexpectedly created or changed live Codex files.' }
 }
 
-function Invoke-IsolatedGui {
+function Invoke-IsolatedGui([bool]$ViaLauncher = $false) {
     $mockPath = Join-Path $testRoot 'mock-codex-must-not-be-called.exe'
     [IO.File]::WriteAllText($mockPath, 'Synthetic sentinel; never execute a real Codex command.')
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = Join-Path $installRoot 'CodexProfileSwitcher.exe'
     $start.Arguments = '--codex-home ' + (Quote-WindowsArgument $codexHome) + ' --data-dir ' + (Quote-WindowsArgument $dataRoot) + ' --codex-exe ' + (Quote-WindowsArgument $mockPath)
+    if ($ViaLauncher) {
+        $start.FileName = Join-Path $env:SystemRoot 'System32\cscript.exe'
+        $start.Arguments = '//Nologo ' + (Quote-WindowsArgument (Join-Path $launcherRoot 'CodexProfileSwitcher.vbs')) + ' ' + $start.Arguments
+        $start.CreateNoWindow = $true
+    }
     $start.UseShellExecute = $false
     $start.EnvironmentVariables['CODEX_SWITCHER_DISABLE_UPDATE_CHECK'] = '1'
     $start.EnvironmentVariables['CODEX_HOME'] = $codexHome
@@ -110,18 +117,26 @@ function Invoke-IsolatedGui {
     $process = [Diagnostics.Process]::Start($start)
     try {
         $ready = $false
+        $windowProcess = $process
         for ($attempt = 0; $attempt -lt 50; $attempt++) {
             if ($process.HasExited) { throw 'Installed WPF exited before displaying its window.' }
-            $process.Refresh()
-            if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -eq 'Codex 切换助手') { $ready = $true; break }
+            if ($ViaLauncher) {
+                $children = @(Get-CimInstance Win32_Process -Filter ("ParentProcessId=" + $process.Id + " AND Name='CodexProfileSwitcher.exe'"))
+                if ($children.Length -eq 1) { $windowProcess = [Diagnostics.Process]::GetProcessById($children[0].ProcessId) }
+            }
+            $windowProcess.Refresh()
+            if ($windowProcess.MainWindowHandle -ne [IntPtr]::Zero -and $windowProcess.MainWindowTitle -eq 'Codex 切换助手') { $ready = $true; break }
             Start-Sleep -Milliseconds 200
         }
         if (-not $ready) { throw ('Installed WPF did not show its expected window: ' + $process.MainWindowTitle) }
-        if (-not $process.CloseMainWindow() -or -not $process.WaitForExit(5000)) { throw 'Installed WPF did not close normally.' }
+        if (-not $windowProcess.CloseMainWindow() -or -not $process.WaitForExit(5000)) { throw 'Installed WPF did not close normally.' }
         if ($process.ExitCode -ne 0) { throw ('Installed WPF exited with code ' + $process.ExitCode) }
         if ([IO.File]::Exists((Join-Path $codexHome 'auth.json')) -or [IO.File]::Exists((Join-Path $codexHome 'config.toml'))) { throw 'GUI startup unexpectedly wrote authentication or Codex configuration.' }
     }
-    finally { if (-not $process.HasExited) { $process.Kill() }; $process.Dispose() }
+    finally {
+        if ($windowProcess -and $windowProcess.Id -ne $process.Id) { if (-not $windowProcess.HasExited) { $windowProcess.Kill() }; $windowProcess.Dispose() }
+        if (-not $process.HasExited) { $process.Kill() }; $process.Dispose()
+    }
 }
 
 try {
@@ -131,11 +146,24 @@ try {
     $launcher = Join-Path $launcherRoot 'CodexProfileSwitcher.vbs'
     [IO.File]::WriteAllBytes($launcher, $launcherBytes)
     if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedLegacyHash) { throw 'The embedded legacy launcher fixture does not match the installer migration signature.' }
+    $notesDirectory = Join-Path $installRoot 'docs\zh-CN\releases'
+    [void][IO.Directory]::CreateDirectory($notesDirectory)
+    $oldNote = Join-Path $notesDirectory '0.3.14.md'
+    $modifiedNote = Join-Path $notesDirectory '0.3.13.md'
+    $unknownNote = Join-Path $notesDirectory '99.0.0.md'
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\docs\zh-CN\releases\0.3.14.md') -Destination $oldNote
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\docs\zh-CN\releases\0.3.13.md') -Destination $modifiedNote
+    [IO.File]::AppendAllText($modifiedNote, 'user custom note')
+    [IO.File]::WriteAllText($unknownNote, 'unknown user file')
+    $modifiedNoteHash = (Get-FileHash -LiteralPath $modifiedNote).Hash
     Invoke-IsolatedInstall
     if (-not (Test-Path -LiteralPath $testUninstallKey)) { throw 'The test installation did not use its own uninstall registration.' }
     Assert-InstalledManifest
     Invoke-IsolatedCli
     Invoke-IsolatedGui
+    Invoke-IsolatedGui $true
+    if ([IO.File]::Exists($oldNote)) { throw 'Known retired release note was not removed.' }
+    if ((Get-FileHash -LiteralPath $modifiedNote).Hash -cne $modifiedNoteHash -or [IO.File]::ReadAllText($unknownNote) -cne 'unknown user file') { throw 'Release note cleanup changed user content.' }
 
     $legacyBackup = $launcher + '.legacy-0.2.9.bak'
     $pointer = Join-Path $launcherRoot 'install-path.txt'
@@ -168,6 +196,16 @@ try {
             throw 'Previous .NET launcher was not upgraded to the current launcher.'
         }
     }
+
+    $whitespaceFixture = Join-Path $PSScriptRoot 'fixtures\launcher-0.3.15.vbs'
+    $whitespaceHash = 'dee96d24623c981d6da0fa9da363c05126b866981f3226f741c67f546adb974e'
+    if ((Get-FileHash -LiteralPath $whitespaceFixture).Hash.ToLowerInvariant() -cne $whitespaceHash) { throw 'Previous whitespace launcher fixture changed.' }
+    Copy-Item -LiteralPath $whitespaceFixture -Destination $launcher -Force
+    Invoke-IsolatedInstall
+    Assert-InstalledManifest
+    if ((Get-FileHash -LiteralPath ($launcher + '.legacy-0.3.15.bak')).Hash.ToLowerInvariant() -cne $whitespaceHash) { throw 'Whitespace launcher was not backed up.' }
+    if ((Get-FileHash -LiteralPath $launcher).Hash -cne (Get-FileHash -LiteralPath (Join-Path $installRoot 'CodexProfileSwitcher.vbs')).Hash) { throw 'Whitespace launcher was not upgraded.' }
+    Invoke-IsolatedGui $true
 
     [IO.File]::AppendAllText($launcher, "`r`n'custom launch marker")
     $changedHash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash

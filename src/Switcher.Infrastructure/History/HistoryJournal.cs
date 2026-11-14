@@ -9,8 +9,9 @@ namespace Switcher.Infrastructure.History;
 internal sealed class HistoryJournal
 {
     internal sealed record Line(long Start, long ContentEnd, long End, long? Ordinal, JsonElement Json);
+    private sealed record InheritedPrefix(string ParentId, long EndOrdinal);
     private static readonly UTF8Encoding Utf8 = new(false, true);
-    private static readonly Regex Segment = new(@"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?<logical>[0-9a-f-]{36})_(?<segment>[0-9a-f-]{36})\.jsonl$", RegexOptions.CultureInvariant);
+    private static readonly Regex Rollout = new(@"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?<logical>[0-9a-f-]{36})(?:_(?<segment>[0-9a-f-]{36}))?\.jsonl$", RegexOptions.CultureInvariant);
 
     public string Path { get; }
     public byte[] Original { get; }
@@ -24,27 +25,60 @@ internal sealed class HistoryJournal
     public JsonElement Metadata { get; }
     public IReadOnlyDictionary<long, Line> Ordinals { get; }
     private Dictionary<long, long> _boundaries = [];
+    private readonly InheritedPrefix? _inheritedPrefix;
 
     public HistoryJournal(string path, byte[] original, byte[] target)
     {
         Path = path; Original = original; Target = target; Lines = Parse(original);
         var metadata = Lines.Where(line => Text(line.Json, "type") == "session_meta").ToArray();
+        if (metadata.Any(line => !line.Json.TryGetProperty("payload", out var payload) || string.IsNullOrWhiteSpace(Text(payload, "id"))))
+            throw new InvalidDataException("历史会话元数据缺少有效身份，未修改历史。");
         var ids = metadata.Select(line => Text(line.Json.GetProperty("payload"), "id")).Distinct(StringComparer.Ordinal).ToArray();
-        if (ids.Length > 1) throw new InvalidDataException("同一历史文件含有不同会话身份，未修改历史。");
         Metadata = metadata.Length == 0 ? default : metadata[0].Json.GetProperty("payload");
         LogicalId = ids.FirstOrDefault() ?? "";
         ProjectionId = LogicalId;
         Paginated = Text(Metadata, "history_mode") == "paginated";
-        var segment = Segment.Match(System.IO.Path.GetFileName(path));
+        var segment = Rollout.Match(System.IO.Path.GetFileName(path));
         if (Paginated && segment.Success)
         {
-            if (segment.Groups["logical"].Value != LogicalId) throw new InvalidDataException("分页分段文件名与会话元数据不符，未修改历史。");
-            ProjectionId = segment.Groups["segment"].Value;
+            if (segment.Groups["logical"].Value != LogicalId) throw new InvalidDataException("分页文件名与会话元数据不符，未修改历史。");
+            if (segment.Groups["segment"].Success) ProjectionId = segment.Groups["segment"].Value;
         }
+        if (ids.Length > 1) _inheritedPrefix = ReadInheritedPrefix(metadata);
         Ordinals = Lines.Where(line => line.Ordinal.HasValue).GroupBy(line => line.Ordinal!.Value)
             .Where(group => group.Count() == 1).ToDictionary(group => group.Key, group => group.Single());
+        if (_inheritedPrefix is not null) ValidatePagination();
         RebuildBoundaries();
     }
+
+    private InheritedPrefix ReadInheritedPrefix(IReadOnlyList<Line> metadata)
+    {
+        const string error = "同一历史文件含有不同会话身份，且无法核实为子代理继承前缀，未修改历史。";
+        var parent = Text(Metadata, "parent_thread_id"); var session = Text(Metadata, "session_id");
+        // A fork can carry a rebased copy of its parent's metadata and replay records. Only the
+        // first header owns this physical file; history_base inside a copied header is inert context.
+        if (!Paginated || Lines[0] != metadata[0] || Lines[0].Ordinal != 0 || Text(Metadata, "thread_source") != "subagent" ||
+            parent.Length == 0 || parent == LogicalId || Text(Metadata, "forked_from_id") != parent || session.Length == 0 ||
+            HasValue(Metadata, "history_base") || HasValue(Metadata, "forked_from_ordinal_exclusive") ||
+            !Metadata.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.Object ||
+            !source.TryGetProperty("subagent", out var subagent) || subagent.ValueKind != JsonValueKind.Object ||
+            !subagent.TryGetProperty("thread_spawn", out var spawn) || Text(spawn, "parent_thread_id") != parent ||
+            !Metadata.TryGetProperty("subagent_history_start_ordinal", out var boundary) || boundary.ValueKind != JsonValueKind.Number ||
+            !boundary.TryGetInt64(out var end) || end < 2 || Lines[^1].Ordinal is not long last || end > last + 1)
+            throw new InvalidDataException(error);
+        foreach (var line in metadata.Skip(1))
+        {
+            var payload = line.Json.GetProperty("payload");
+            if (line.Ordinal is not long ordinal || ordinal < 1 || ordinal >= end || Text(payload, "id") != parent ||
+                Text(payload, "session_id") != session || Text(payload, "history_mode") != "paginated")
+                throw new InvalidDataException(error);
+        }
+        if (Lines.Where((line, index) => line.Ordinal != index).Any()) throw new InvalidDataException(error);
+        return new(parent, end);
+    }
+
+    public bool IsOwnUiEvent(Line line) => (_inheritedPrefix is null || line.Ordinal >= _inheritedPrefix.EndOrdinal) &&
+        line.Json.TryGetProperty("payload", out var payload) && Text(payload, "thread_id") == LogicalId;
 
     public void ValidatePagination()
     {
@@ -59,7 +93,9 @@ internal sealed class HistoryJournal
             if (Text(line.Json, "type") == "event_msg" && line.Json.TryGetProperty("payload", out var payload))
             {
                 var owner = Text(payload, "thread_id");
-                if (owner.Length > 0 && owner != LogicalId) throw new InvalidDataException("分页历史含有其他会话的事件，未修改历史。");
+                if (owner.Length > 0 && owner != LogicalId &&
+                    !(_inheritedPrefix is not null && ordinal < _inheritedPrefix.EndOrdinal && owner == _inheritedPrefix.ParentId))
+                    throw new InvalidDataException("分页历史含有其他会话的事件，未修改历史。");
             }
         }
         if (Metadata.TryGetProperty("history_base", out var historyBase) && historyBase.ValueKind != JsonValueKind.Null)
@@ -74,8 +110,8 @@ internal sealed class HistoryJournal
         {
             if (Lines[0].Ordinal != 0 || Lines.Where((line, index) => line.Ordinal != index).Any())
                 throw new InvalidDataException("独立分页分段的 ordinal 不连续，未修改历史。");
-            if (new[] { "forked_from_id", "forked_from_ordinal_exclusive" }.Any(name => Metadata.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null) ||
-                (Metadata.TryGetProperty("session_id", out var sessionId) && sessionId.ValueKind != JsonValueKind.Null && (sessionId.ValueKind != JsonValueKind.String || sessionId.GetString() != LogicalId)))
+            if (_inheritedPrefix is null && (new[] { "forked_from_id", "forked_from_ordinal_exclusive" }.Any(name => HasValue(Metadata, name)) ||
+                (Metadata.TryGetProperty("session_id", out var sessionId) && sessionId.ValueKind != JsonValueKind.Null && (sessionId.ValueKind != JsonValueKind.String || sessionId.GetString() != LogicalId))))
                 throw new InvalidDataException("独立分页分段仍有未核验的继承信息或归属冲突，未修改历史。");
         }
     }
@@ -197,4 +233,5 @@ internal sealed class HistoryJournal
     }
 
     internal static string Text(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object && root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+    private static bool HasValue(JsonElement root, string name) => root.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null;
 }

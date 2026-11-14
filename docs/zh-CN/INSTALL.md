@@ -1,14 +1,14 @@
 # 图形版使用说明
 
-当前源码及安装包版本：0.3.14，面向 Windows 10/11 x64。
+当前源码及安装包版本：0.3.16，面向 Windows 10/11 x64。
 
-本版采用 C# / .NET 10 WPF 与青绿色卡片界面，下载 [0.3.14 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.14)。[本版公告](releases/0.3.14.md)与应用内一致，本次修复分页历史兼容阻断切换的问题。0.2.x 安装包是旧版 PowerShell 程序。
+本版采用 C# / .NET 10 WPF 与青绿色卡片界面，下载 [0.3.16 Release](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.16)。[本版公告](releases/0.3.16.md)与应用内一致，本次修复安装后固定入口读取路径末尾换行失败的问题，同时包含子代理历史兼容修复。0.2.x 安装包是旧版 PowerShell 程序。
 
 ## 安装和固定入口
 
 从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载 `Codex-Profile-Switcher-Setup-版本.exe`。安装和卸载向导均使用简体中文。安装器默认写入当前用户的 `%LOCALAPPDATA%\Programs\CodexProfileSwitcher`，不需要管理员权限。开始菜单入口固定创建；桌面快捷方式可在安装时选择。
 
-快捷方式始终指向 `%LOCALAPPDATA%\CodexProfileSwitcher\Launcher\CodexProfileSwitcher.vbs`。后续升级只更新该目录中的 `install-path.txt`，保持固定入口和快捷方式目标稳定。已知的 0.2.9 和 0.3.6 旧启动器会先备份再迁移；入口支持中文路径和源码目录中的发布路径指针。已知旧版 PowerShell 业务文件仅在 SHA-256 完全匹配时清理。修改过或无法识别的文件会保留并给出提示。
+新安装的快捷方式默认指向 `%LOCALAPPDATA%\CodexProfileSwitcher\Launcher\CodexProfileSwitcher.vbs`；显式指定固定入口位置时沿用指定目录。后续升级更新入口路径指针，已知的 0.2.9、0.3.6 和 0.3.7–0.3.15 旧启动器先备份再迁移。入口支持中文路径、带 BOM/换行的路径文件和源码发布指针。已知旧版 PowerShell 业务文件及退役公告仅在 SHA-256 完全匹配时清理；修改过或无法识别的文件保留。
 
 安装包自带 .NET 10 运行时。用户运行不需要 PowerShell、.NET SDK、Python、Node.js 或单独安装 SQLite。安装和卸载不登录账号，不改 Codex 配置；卸载不会删除 `%LOCALAPPDATA%\CodexProfileSwitcher`、`CODEX_HOME` 或聊天项目。
 

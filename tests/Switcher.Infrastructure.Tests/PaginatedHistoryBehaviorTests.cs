@@ -201,13 +201,18 @@ public sealed class PaginatedHistoryBehaviorTests
     }
 
     [Theory]
-    [InlineData("after-json")]
-    [InlineData("after-db-commit")]
-    [InlineData("after-ready")]
-    [InlineData("cancel")]
-    public async Task Failure_or_cancellation_restores_json_and_all_related_databases(string boundary)
+    [InlineData("after-json", false)]
+    [InlineData("after-db-commit", false)]
+    [InlineData("after-ready", false)]
+    [InlineData("cancel", false)]
+    [InlineData("after-json", true)]
+    [InlineData("after-db-commit", true)]
+    [InlineData("after-ready", true)]
+    [InlineData("cancel", true)]
+    public async Task Failure_or_cancellation_restores_json_and_all_related_databases(string boundary, bool inherited)
     {
         using var fixture = new Fixture();
+        if (inherited) InheritedHistoryBehaviorTests.UseInheritedPrefix(fixture);
         var original = fixture.DatabaseSnapshot(); using var cancellation = new CancellationTokenSource();
         var intercept = new InterceptFiles(fixture.Files, (path, after) =>
         {
@@ -226,11 +231,15 @@ public sealed class PaginatedHistoryBehaviorTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Restart_recovers_real_version3_plans_after_partial_or_complete_database_commits(bool partial)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Restart_recovers_real_version3_plans_after_partial_or_complete_database_commits(bool partial, bool inherited)
     {
-        using var fixture = new Fixture(); var original = fixture.DatabaseSnapshot();
+        using var fixture = new Fixture();
+        if (inherited) InheritedHistoryBehaviorTests.UseInheritedPrefix(fixture);
+        var original = fixture.DatabaseSnapshot();
         await fixture.Service.PrepareAsync(false, null, CancellationToken.None);
         var target = File.ReadAllBytes(fixture.Journal); var applied = fixture.DatabaseSnapshot();
         var manifestPath = fixture.Manifest(); var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))!;

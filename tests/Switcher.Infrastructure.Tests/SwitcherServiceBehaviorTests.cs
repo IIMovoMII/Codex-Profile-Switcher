@@ -20,12 +20,16 @@ namespace Switcher.Infrastructure.Tests;
 public sealed class SwitcherServiceBehaviorTests
 {
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public async Task Normal_switch_uses_native_paginated_history_and_keeps_its_committed_result_if_authentication_fails(bool officialToApi, bool failAuthentication)
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    public async Task Normal_switch_uses_native_paginated_history_and_keeps_its_committed_result_if_authentication_fails(bool officialToApi, bool failAuthentication, bool inherited)
     {
         using var history = new PaginatedHistoryBehaviorTests.Fixture();
+        if (inherited) InheritedHistoryBehaviorTests.UseInheritedPrefix(history);
         using var fixture = new Fixture(history.Paths, actualHistory: true);
         var officialAuth = CreateOfficialAuth("synthetic-paged-switch");
         var official = fixture.Management.ImportOfficial("Synthetic official", officialAuth);

@@ -45,8 +45,10 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new SwitchProgress("历史扫描", $"正在检查 {Path.GetFileName(path)}。", rolloutFiles.Length == 0 ? 45 : 10 + index * 40 / rolloutFiles.Length));
             var original = files.ReadAllBytes(path);
-            var target = RewriteJsonl(path, original, threadIds);
-            journals.Add(new HistoryJournal(path, original, target));
+            var target = RewriteJsonl(path, original);
+            var journal = new HistoryJournal(path, original, target);
+            journals.Add(journal);
+            if (journal.LogicalId.Length > 0) threadIds.Add(journal.LogicalId);
             index++;
         }
         HistoryJournal.UpdateParentBoundaries(journals);
@@ -368,7 +370,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
 
     private static string JoinMessages(IReadOnlyList<string> prior, string current) => prior.Count == 0 ? current : string.Join("；", prior.Append(current));
 
-    private byte[] RewriteJsonl(string path, byte[] source, HashSet<string> threadIds)
+    private byte[] RewriteJsonl(string path, byte[] source)
     {
         if (source.Length == 0) throw new InvalidDataException($"历史文件为空，拒绝切换：{Path.GetFileName(path)}");
         var output = new MemoryStream(source.Length + 64);
@@ -385,7 +387,7 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
             var text = new UTF8Encoding(false, true).GetString(raw);
             lineNumber++;
             if (hasBom) output.Write(Encoding.UTF8.Preamble);
-            if (!string.IsNullOrWhiteSpace(text)) output.Write(Encoding.UTF8.GetBytes(RewriteJsonLine(text, lineNumber, threadIds)));
+            if (!string.IsNullOrWhiteSpace(text)) output.Write(Encoding.UTF8.GetBytes(RewriteJsonLine(text, lineNumber)));
             else output.Write(raw);
             if (contentEnd < lineEnd) output.WriteByte(0x0D);
             if (newline >= 0) output.WriteByte(0x0A);
@@ -395,18 +397,14 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
         return output.ToArray();
     }
 
-    private static string RewriteJsonLine(string line, int lineNumber, HashSet<string> threadIds)
+    private static string RewriteJsonLine(string line, int lineNumber)
     {
         using var document = JsonDocument.Parse(line);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object) return line;
-        if (root.TryGetProperty("type", out var recordType) && recordType.ValueKind == JsonValueKind.String && recordType.GetString() == "session_meta" &&
-            root.TryGetProperty("payload", out var meta) && meta.ValueKind == JsonValueKind.Object && meta.TryGetProperty("id", out var thread) && thread.ValueKind == JsonValueKind.String)
-            threadIds.Add(thread.GetString()!);
-
         var targetPaths = new List<string[]>();
-        var recordName = root.TryGetProperty("type", out recordType) && recordType.ValueKind == JsonValueKind.String ? recordType.GetString() : null;
-        if (recordName == "session_meta" && root.TryGetProperty("payload", out meta) && meta.ValueKind == JsonValueKind.Object && meta.TryGetProperty("model_provider", out var provider))
+        var recordName = root.TryGetProperty("type", out var recordType) && recordType.ValueKind == JsonValueKind.String ? recordType.GetString() : null;
+        if (recordName == "session_meta" && root.TryGetProperty("payload", out var meta) && meta.ValueKind == JsonValueKind.Object && meta.TryGetProperty("model_provider", out var provider))
             targetPaths.Add(["payload", "model_provider"]);
         if (recordName == "event_msg" && root.TryGetProperty("payload", out var eventPayload) && eventPayload.ValueKind == JsonValueKind.Object &&
             eventPayload.TryGetProperty("type", out var eventType) && eventType.ValueKind == JsonValueKind.String && eventType.GetString() == "thread_settings_applied" &&
@@ -611,14 +609,14 @@ public sealed class HistoryCompatibilityService(ISwitcherFileSystem files, Switc
         try
         {
             var stamp = JsonSerializer.Deserialize<ReadyStamp>(files.ReadAllBytes(path));
-            return stamp is { Version: 3 } && string.Equals(stamp.CodexHome, paths.CodexHome, StringComparison.OrdinalIgnoreCase) && string.Equals(stamp.Fingerprint, fingerprint, StringComparison.Ordinal);
+            return stamp is { Version: 4 } && string.Equals(stamp.CodexHome, paths.CodexHome, StringComparison.OrdinalIgnoreCase) && string.Equals(stamp.Fingerprint, fingerprint, StringComparison.Ordinal);
         }
         catch (Exception ex) when (ex is JsonException or IOException) { return false; }
     }
 
     private void WriteReady(string path, string fingerprint, int fileCount, int databaseCount)
     {
-        var content = JsonSerializer.SerializeToUtf8Bytes(new ReadyStamp(3, paths.CodexHome, fingerprint, fileCount, databaseCount));
+        var content = JsonSerializer.SerializeToUtf8Bytes(new ReadyStamp(4, paths.CodexHome, fingerprint, fileCount, databaseCount));
         files.WriteAtomic(path, content);
     }
 

@@ -141,6 +141,16 @@ internal static class LauncherProbe {
     Invoke-Launcher 'CodexProfileSwitcher.vbs' $arguments
     [IO.File]::WriteAllText($pointer, $publishRoot, [Text.Encoding]::Unicode)
     Invoke-Launcher 'CodexProfileSwitcher.vbs' $arguments
+    # Inno Setup writes a BOM and CRLF with SaveStringsToUTF8File.
+    [IO.File]::WriteAllText($pointer, $publishRoot + "`r`n", (New-Object Text.UTF8Encoding($true)))
+    Invoke-Launcher 'CodexProfileSwitcher.vbs' $arguments
+    [IO.File]::WriteAllText($pointer, "`r`n`t" + $publishRoot + "`r`n", [Text.Encoding]::Unicode)
+    Invoke-Launcher 'CodexProfileSwitcher.vbs' $arguments
+    [IO.File]::WriteAllText($pointer, $publishRoot + "`n", $utf8)
+    Invoke-Launcher 'Codex切换.vbs' $arguments
+    Invoke-Launcher 'start.vbs' $arguments
+    [IO.File]::WriteAllText($pointer, $publishRoot + "`r`n" + $sourceRoot, $utf8)
+    Invoke-Launcher 'CodexProfileSwitcher.vbs' @() 1
     [IO.File]::Delete($pointer)
     Copy-Item -LiteralPath $probeExe -Destination (Join-Path $launcherRoot 'CodexProfileSwitcher.exe')
     $originalPublishRoot = $publishRoot

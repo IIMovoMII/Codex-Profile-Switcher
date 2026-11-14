@@ -1,0 +1,2 @@
+# Migration fixtures must retain the original shipped bytes for SHA-256 checks.
+tests/fixtures/launcher-0.3.15.vbs -text

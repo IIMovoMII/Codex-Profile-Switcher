@@ -192,7 +192,7 @@ internal static class PaginatedHistoryAdapter
             {
                 if (!journal.Ordinals.TryGetValue(ordinal, out var line) || line.End > cursor || Text(line.Json, "type") != "event_msg" ||
                     !line.Json.TryGetProperty("payload", out var payload) || Text(payload, "type") is not ("item_completed" or "item_started" or "item_updated") ||
-                    Text(payload, "thread_id") != journal.LogicalId || Text(payload, "turn_id") != item["turn_id"].Text || !payload.TryGetProperty("item", out var source) ||
+                    !journal.IsOwnUiEvent(line) || Text(payload, "turn_id") != item["turn_id"].Text || !payload.TryGetProperty("item", out var source) ||
                     Text(source, "id") != item["item_id"].Text || UiType(source) != item["item_type"].Text)
                     throw new InvalidDataException("分页界面项目无法核实为独立事件来源，未清除模型输入标识。");
             }

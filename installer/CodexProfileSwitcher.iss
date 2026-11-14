@@ -54,6 +54,7 @@ Filename: "{sys}\wscript.exe"; Parameters: """{code:GetLauncherFile}"""; Descrip
 const
   LegacyLauncherSha256 = 'c76301c7fa887265fbc97dd3fca0dbf5efa6c15d95ecb6583d6b25c297b09413';
   PreviousDotNetLauncherSha256 = '5c3d1fdf6ad3c61eb348cd5af6747f43e8f13a6e604b2575d060e9b315cb8339';
+  PreviousWhitespaceLauncherSha256 = 'dee96d24623c981d6da0fa9da363c05126b866981f3226f741c67f546adb974e';
 
 function GetApplicationId(Param: String): String;
 var
@@ -101,16 +102,16 @@ begin
   else if CompareText(RelativePath, 'tools\sqlite3.ps1') = 0 then Result := '5272f44ff8cfdf459d55dcff82e08a815253f2ddb7fdc89932a28c60b0dbc39a';
 end;
 
-function IsSafeToolsDirectory: Boolean;
+function IsSafeChildDirectory(const ParentDirectory, ChildName: String): Boolean;
 var
   FindRec: TFindRec;
 begin
   Result := False;
-  if FindFirst(AddBackslash(ExpandConstant('{app}')) + '*', FindRec) then
+  if FindFirst(AddBackslash(ParentDirectory) + '*', FindRec) then
   begin
     try
       repeat
-        if CompareText(FindRec.Name, 'tools') = 0 then
+        if CompareText(FindRec.Name, ChildName) = 0 then
         begin
           Result := ((FindRec.Attributes and $10) <> 0) and ((FindRec.Attributes and $400) = 0);
           Break;
@@ -121,6 +122,28 @@ begin
     end;
   end;
 end;
+
+procedure DeleteRetiredReleaseNote(const FileName, ExpectedHash: String);
+var
+  TargetPath: String;
+begin
+  if not IsSafeChildDirectory(ExpandConstant('{app}'), 'docs') then Exit;
+  if not IsSafeChildDirectory(ExpandConstant('{app}\docs'), 'zh-CN') then Exit;
+  if not IsSafeChildDirectory(ExpandConstant('{app}\docs\zh-CN'), 'releases') then Exit;
+  TargetPath := ExpandConstant('{app}\docs\zh-CN\releases\') + FileName;
+  if FileExists(TargetPath) then
+  begin
+    if CompareText(GetSHA256OfFile(TargetPath), ExpectedHash) = 0 then
+    begin
+      if not DeleteFile(TargetPath) then
+        RaiseException('无法清理已核验的旧版公告：' + TargetPath);
+    end
+    else
+      Log('Preserved modified retired release note: ' + TargetPath);
+  end;
+end;
+
+#include GetEnv("CODEX_SWITCHER_RETIRED_NOTES_INCLUDE")
 
 function CollectPowerShellFiles(const Directory: String; var FileList: String): Boolean;
 var
@@ -193,7 +216,7 @@ begin
     RelativePath := RelativePaths[I];
     TargetPath := AddBackslash(ExpandConstant('{app}')) + RelativePath;
     ExpectedHash := GetLegacyPowerShellHash(RelativePath);
-    if ((RelativePath <> 'tools\sqlite3.ps1') or IsSafeToolsDirectory) and
+    if ((RelativePath <> 'tools\sqlite3.ps1') or IsSafeChildDirectory(ExpandConstant('{app}'), 'tools')) and
        FileExists(TargetPath) and (ExpectedHash <> '') then
       if CompareText(GetSHA256OfFile(TargetPath), ExpectedHash) = 0 then
         DeleteFile(TargetPath);
@@ -235,12 +258,15 @@ begin
     begin
       LauncherHash := GetSHA256OfFile(LauncherFile);
       if (CompareText(LauncherHash, LegacyLauncherSha256) = 0) or
-         (CompareText(LauncherHash, PreviousDotNetLauncherSha256) = 0) then
+         (CompareText(LauncherHash, PreviousDotNetLauncherSha256) = 0) or
+         (CompareText(LauncherHash, PreviousWhitespaceLauncherSha256) = 0) then
       begin
         if CompareText(LauncherHash, LegacyLauncherSha256) = 0 then
           LauncherBackup := LauncherFile + '.legacy-0.2.9.bak'
+        else if CompareText(LauncherHash, PreviousDotNetLauncherSha256) = 0 then
+          LauncherBackup := LauncherFile + '.legacy-0.3.6.bak'
         else
-          LauncherBackup := LauncherFile + '.legacy-0.3.6.bak';
+          LauncherBackup := LauncherFile + '.legacy-0.3.15.bak';
         if FileExists(LauncherBackup) then
         begin
           SourceHash := GetSHA256OfFile(LauncherBackup);
@@ -267,6 +293,7 @@ begin
     end;
 
     MigrateLegacyPowerShellFiles(LauncherDirectory);
+    MigrateRetiredReleaseNotes;
 
     SetArrayLength(InstallPaths, 1);
     InstallPaths[0] := ExpandConstant('{app}');

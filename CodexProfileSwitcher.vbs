@@ -81,8 +81,25 @@ Function ReadPointer(path, encoding)
         stream.LoadFromFile path
         value = stream.ReadText
     End If
-    If Err.Number = 0 Then ReadPointer = Trim(Replace(value, ChrW(&HFEFF), ""))
+    If Err.Number = 0 Then ReadPointer = NormalizePointer(value)
     stream.Close
+End Function
+
+Function NormalizePointer(value)
+    Dim whitespace
+    NormalizePointer = ""
+    value = Replace(value, ChrW(&HFEFF), "")
+    whitespace = " " & vbTab & vbCr & vbLf
+    Do While Len(value) > 0
+        If InStr(whitespace, Left(value, 1)) = 0 Then Exit Do
+        value = Mid(value, 2)
+    Loop
+    Do While Len(value) > 0
+        If InStr(whitespace, Right(value, 1)) = 0 Then Exit Do
+        value = Left(value, Len(value) - 1)
+    Loop
+    If InStr(value, vbCr) > 0 Or InStr(value, vbLf) > 0 Or InStr(value, vbTab) > 0 Then Exit Function
+    NormalizePointer = value
 End Function
 
 Function UnicodeText(hexCodes)

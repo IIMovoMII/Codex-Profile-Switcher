@@ -16,7 +16,7 @@
 
 从 [GitHub Releases](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases) 下载 `Codex-Profile-Switcher-Setup-版本.exe`。安装器面向当前 Windows 用户，不要求管理员权限。安装时可选择创建桌面快捷方式；桌面和开始菜单快捷方式都使用固定启动入口。
 
-当前稳定版为 **[0.3.14](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.14)**，补齐分页历史投影与 JSONL 字节偏移适配，修复普通切换被拦截、中文字节索引及 WAL 增量遗漏。完整内容见 [0.3.14 更新公告](docs/zh-CN/releases/0.3.14.md)，应用内使用相同公告。0.2.x 是旧版 PowerShell 程序。
+当前稳定版为 **[0.3.16](https://github.com/IIMovoMII/Codex-Profile-Switcher/releases/tag/v0.3.16)**，修复安装后固定入口无法启动的问题，并包含子代理继承历史兼容修复。完整内容见 [0.3.16 更新公告](docs/zh-CN/releases/0.3.16.md)，应用内使用相同公告。0.2.x 是旧版 PowerShell 程序。
 
 安装和卸载向导使用简体中文，安装包自带 .NET 10 运行时。日常运行不需要 .NET SDK、PowerShell、Python、Node.js 或额外 SQLite 安装。
 
@@ -79,4 +79,4 @@ dotnet test .\CodexProfileSwitcher.sln
 
 构建安装包需要 .NET 10 SDK 和 Inno Setup 6。安装器采用自包含 Windows x64 发布，不启用 trimming 或 NativeAOT。功能映射、关键决定和隔离验证状态见 [REFACTOR_PLAN.md](REFACTOR_PLAN.md)；贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-当前源码版本为 **0.3.14**。隔离测试不等于真实账号登录、真实 API 使用或跨机器验证。项目采用 [MIT License](LICENSE.txt)。
+当前源码版本为 **0.3.16**。隔离测试不等于真实账号登录、真实 API 使用或跨机器验证。项目采用 [MIT License](LICENSE.txt)。

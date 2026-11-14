@@ -128,9 +128,23 @@ try {
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText((Join-Path $payloadDirectory 'SHA256.json'), (ConvertTo-Json -InputObject $manifest -Depth 5), $encoding)
 
+    # Retire only shipped, byte-identical release notes. Never infer ownership from an arbitrary old manifest.
+    $retiredNotesInclude = Join-Path $workDirectory 'retired-release-notes.iss'
+    $cleanupLines = [System.Collections.Generic.List[string]]::new()
+    $cleanupLines.Add('procedure MigrateRetiredReleaseNotes;')
+    $cleanupLines.Add('begin')
+    foreach ($note in @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'docs\zh-CN\releases') -File -Filter '*.md' | Sort-Object Name)) {
+        if ($note.BaseName -notmatch '^\d+\.\d+\.\d+$' -or [version]$note.BaseName -ge [version]$version) { continue }
+        $noteHash = (Get-FileHash -LiteralPath $note.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $cleanupLines.Add("  DeleteRetiredReleaseNote('$($note.Name)', '$noteHash');")
+    }
+    $cleanupLines.Add('end;')
+    [IO.File]::WriteAllLines($retiredNotesInclude, $cleanupLines, $encoding)
+
     $env:CODEX_SWITCHER_SOURCE = $payloadDirectory
     $env:CODEX_SWITCHER_OUTPUT = $OutputDirectory
     $env:CODEX_SWITCHER_VERSION = $version
+    $env:CODEX_SWITCHER_RETIRED_NOTES_INCLUDE = $retiredNotesInclude
     try {
         & $CompilerPath (Join-Path $PSScriptRoot 'installer\CodexProfileSwitcher.iss')
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败，退出码：$LASTEXITCODE" }
@@ -138,6 +152,7 @@ try {
         Remove-Item Env:\CODEX_SWITCHER_SOURCE -ErrorAction SilentlyContinue
         Remove-Item Env:\CODEX_SWITCHER_OUTPUT -ErrorAction SilentlyContinue
         Remove-Item Env:\CODEX_SWITCHER_VERSION -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_SWITCHER_RETIRED_NOTES_INCLUDE -ErrorAction SilentlyContinue
     }
 
     if (-not [IO.File]::Exists($setupPath)) { throw "Inno Setup 未生成预期安装包：$setupPath" }
